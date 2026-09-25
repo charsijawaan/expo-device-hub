@@ -1897,6 +1897,14 @@ export function handleNetworkCaptureRequest(
   });
 }
 
+/**
+ * Captured data is exported only for a device this process serves. The state directory is shared by
+ * every serve-sim server, so a caller could otherwise name another server's device.
+ */
+function capturedHere(state: ServeSimState | null): ServeSimState | null {
+  return state && state.pid === process.pid ? state : null;
+}
+
 /** On-demand headers/bodies (omitted from the live stream). */
 export function handleCaptureBodyRequest(
   req: SimReq,
@@ -1905,7 +1913,8 @@ export function handleCaptureBodyRequest(
   id: string,
   runtime: CaptureRuntime = captureRuntime,
 ): void {
-  const store = state ? runtime.storeFor(state.device) : null;
+  const owned = capturedHere(state);
+  const store = owned ? runtime.storeFor(owned.device) : null;
   const body = store?.body(id) ?? null;
   if (!body) {
     res.writeHead(404, { "Content-Type": "application/json", ...NO_STORE });
@@ -1946,6 +1955,7 @@ export async function handleCaptureHarRequest(
   state: ServeSimState | null,
   runtime: CaptureRuntime = captureRuntime,
 ): Promise<void> {
+  state = capturedHere(state);
   if (!state) {
     res.writeHead(404, { "Content-Type": "application/json", ...NO_STORE });
     res.end(JSON.stringify({ error: "No capture session" }));
