@@ -40,3 +40,28 @@ test("disarms after a failed capture teardown", async () => {
   });
   expect(disarmed).toBe(true);
 });
+
+test("leaves no timer running once both steps finish early", async () => {
+  const originalSet = globalThis.setTimeout;
+  const originalClear = globalThis.clearTimeout;
+  const live = new Set<unknown>();
+  globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+    const id = originalSet(() => {
+      live.delete(id);
+      fn();
+    }, ms);
+    live.add(id);
+    return id;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id: ReturnType<typeof setTimeout>) => {
+    live.delete(id);
+    originalClear(id);
+  }) as typeof clearTimeout;
+  try {
+    await runShutdownSteps({ stopCapture: async () => {}, disarm: async () => {}, totalMs: 60_000, captureShareMs: 30_000 });
+    expect(live.size).toBe(0);
+  } finally {
+    globalThis.setTimeout = originalSet;
+    globalThis.clearTimeout = originalClear;
+  }
+});

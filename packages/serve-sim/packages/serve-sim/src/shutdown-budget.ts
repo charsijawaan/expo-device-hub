@@ -9,8 +9,15 @@ export async function runShutdownSteps(steps: {
   captureShareMs: number;
 }): Promise<void> {
   const started = Date.now();
-  const within = (work: Promise<unknown>, ms: number) =>
-    Promise.race([work.catch(() => {}), new Promise((done) => setTimeout(done, Math.max(0, ms)))]);
+  // The losing timer is cleared, so a caller that does not exit right away is not held open.
+  const within = async (work: Promise<unknown>, ms: number) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([work.catch(() => {}), new Promise((done) => (timer = setTimeout(done, Math.max(0, ms))))]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   await within(steps.stopCapture(), steps.captureShareMs);
   await within(steps.disarm(), steps.totalMs - (Date.now() - started));
 }
