@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { managedStartupDylibs } from "../../capability-config";
-import { createCaptureRuntime, CaptureEnableError } from "../../capture/runtime";
+import { createCaptureRuntime, CaptureEnableError, discardCaptureArtifactsForExit } from "../../capture/runtime";
 import { CaptureStore } from "../../capture/store";
 import { type CaptureProxy, type MitmProxyDeps } from "../../capture/mitm-engine";
 import { installShims, useTempStateDir } from "../helpers";
@@ -820,6 +820,24 @@ describe("capture runtime", () => {
     await first.runtime.disableAll();
     expect(await second.runtime.flushHarPathFor(UDID)).not.toBeNull();
     await second.runtime.disableAll();
+  });
+
+  test("removes capture files on process exit without any caller wiring it up", async () => {
+    const { existsSync, mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = join(mkdtempSync(join(tmpdir(), "serve-sim-runtime-exit-hook-")), "capture-device");
+    const { runtime } = harness({ writeDiskArtifacts: true, captureDirFor: () => dir });
+    try {
+      await runtime.enableForDevice(UDID);
+      expect(existsSync(dir)).toBe(true);
+      expect(process.listeners("exit")).toContain(discardCaptureArtifactsForExit);
+      discardCaptureArtifactsForExit();
+      expect(existsSync(dir)).toBe(false);
+      await runtime.disableAll();
+    } finally {
+      rmSync(join(dir, ".."), { recursive: true, force: true });
+    }
   });
 
   test("removes capture files synchronously for process exit", async () => {
