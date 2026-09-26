@@ -198,12 +198,20 @@ export class CaptureDiskAccumulator {
     // After a failed flush the recording stays claimed, so a retry can finish and remove it.
     if (failure) return failure;
     try {
-      if (this.owner) releaseCaptureDirectory(this.dir, this.owner, opts.removeDir ?? false, this.ownerFile);
+      if (this.owner) releaseCaptureDirectory(this.dir, this.owner, this.removesDir(opts.removeDir), this.ownerFile);
     } catch (error) {
       console.warn(`Network capture: releasing ${this.dir} failed:`, error);
     }
     this.owner = null;
     return null;
+  }
+
+  /**
+   * A writer with its own owner file shares its folder with other files (a `capture har -o`
+   * target), so it never removes the folder; only a session's private folder is removed.
+   */
+  private removesDir(requested: boolean | undefined): boolean {
+    return (requested ?? false) && this.ownerFile === undefined;
   }
 
   async stop(): Promise<void> {
@@ -225,7 +233,7 @@ export class CaptureDiskAccumulator {
     this.ending = Promise.resolve(null);
     const owner = this.owner;
     this.owner = null;
-    if (owner) releaseCaptureDirectory(this.dir, owner, true, this.ownerFile);
+    if (owner) releaseCaptureDirectory(this.dir, owner, this.removesDir(true), this.ownerFile);
   }
 
   private enqueue(task: () => Promise<void>): void {

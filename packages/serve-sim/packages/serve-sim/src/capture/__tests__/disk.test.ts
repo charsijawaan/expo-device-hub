@@ -120,6 +120,29 @@ describe("CaptureDiskAccumulator", () => {
     }
   });
 
+  it("never removes a shared folder, even when asked to", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "serve-sim-disk-shared-"));
+    writeFileSync(join(dir, "unrelated.txt"), "keep me");
+    try {
+      const disk = new CaptureDiskAccumulator({
+        dir, harPath: join(dir, "a.har"), entriesPath: join(dir, "a.entries.ndjson"),
+        networkCapturePath: join(dir, "a.network-capture.json"), ownerFile: "a.owner.pid", flushIntervalMs: 60_000,
+      });
+      disk.begin();
+      disk.discardSync();
+      expect(readFileSync(join(dir, "unrelated.txt"), "utf8")).toBe("keep me");
+      const again = new CaptureDiskAccumulator({
+        dir, harPath: join(dir, "b.har"), entriesPath: join(dir, "b.entries.ndjson"),
+        networkCapturePath: join(dir, "b.network-capture.json"), ownerFile: "b.owner.pid", flushIntervalMs: 60_000,
+      });
+      again.begin();
+      await again.stop();
+      expect(readFileSync(join(dir, "unrelated.txt"), "utf8")).toBe("keep me");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to write through a symlink planted at a recording path", async () => {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-disk-symlink-"));
     const victim = join(dir, "victim.txt");
