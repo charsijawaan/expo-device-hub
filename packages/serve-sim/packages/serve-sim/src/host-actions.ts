@@ -330,7 +330,16 @@ async function runProcedureAsync(action: ProcedureAction, raw: unknown): Promise
       const { closeDeviceSession } = await import("./device-session");
       closeDeviceSession(p.udid);
       try {
-        return ok(JSON.stringify(await rebootWithCapture(p.udid, p.enabled)));
+        const meta = await rebootWithCapture(p.udid, p.enabled);
+        // The device rebooted, but capture did not start: report a failed action, not a toggle.
+        if (p.enabled && meta.attachment === "failed") {
+          return {
+            stdout: JSON.stringify(meta),
+            stderr: meta.attachError ?? "Capture could not start after the reboot.",
+            exitCode: 1,
+          };
+        }
+        return ok(JSON.stringify(meta));
       } catch (error) {
         return {
           stdout: "",

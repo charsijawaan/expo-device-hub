@@ -299,6 +299,20 @@ describe("capture actions", () => {
     }
   });
 
+  it("reports a reboot whose capture failed to start as a failed action", async () => {
+    const capture = await import("../capture");
+    const meta = { ...capture.captureRuntime.metaFor(UDID), attachment: "failed" as const, attachError: "mitmdump is not installed" };
+    const reboot = spyOn(capture, "rebootWithCapture").mockResolvedValue(meta);
+    try {
+      const result = await runHostActionAsync({ action: "capture.reboot", params: { udid: UDID, enabled: true } }, BIN);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("mitmdump is not installed");
+      expect(JSON.parse(result.stdout).attachment).toBe("failed");
+    } finally {
+      reboot.mockRestore();
+    }
+  });
+
   it("reports no capture session for an unknown device", async () => {
     const result = await runHostActionAsync({ action: "capture.clear", params: { udid: UDID } }, BIN);
 
