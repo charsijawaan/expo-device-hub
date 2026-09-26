@@ -86,16 +86,24 @@ export function useCaptureStream(
 }
 
 // Request IDs are per device; always include the device in body lookups.
-export async function fetchCapturedBody(
-  id: string,
-  device: string,
-): Promise<CapturedBody | null> {
+/** A body lookup: the body (null when none was captured), or why the lookup failed. */
+export type CapturedBodyLookup = { body: CapturedBody | null } | { error: string };
+
+/** A failed lookup is reported as an error, so it never looks like a request without a body. */
+export function readCapturedBodyResult(result: { exitCode: number; stdout: string; stderr: string }): CapturedBodyLookup {
+  if (result.exitCode !== 0) return { error: result.stderr || "The body could not be loaded." };
+  if (!result.stdout) return { body: null };
   try {
-    const result = await runHostAction("capture.body", { udid: device, id });
-    return result.exitCode === 0 && result.stdout
-      ? JSON.parse(result.stdout) as CapturedBody
-      : null;
+    return { body: JSON.parse(result.stdout) as CapturedBody };
   } catch {
-    return null;
+    return { error: "The body could not be read." };
+  }
+}
+
+export async function fetchCapturedBody(id: string, device: string): Promise<CapturedBodyLookup> {
+  try {
+    return readCapturedBodyResult(await runHostAction("capture.body", { udid: device, id }));
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "The body could not be loaded." };
   }
 }

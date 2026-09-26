@@ -149,7 +149,7 @@ describe("client runHostAction", () => {
       params: { id: "r1", udid: "ABCD1234-0000-0000-0000-0000000000EF" },
     });
     socket.reply({ id: sentFrames.at(-1)!.id, stdout: JSON.stringify(body), exitCode: 0 });
-    expect(await call).toEqual(body);
+    expect(await call).toEqual({ body });
   });
 
   // Left last: closing the socket tears down the module's cached connection.

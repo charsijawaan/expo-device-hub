@@ -24,7 +24,10 @@ function statusTint(request: CapturedRequest): string {
   return "bg-emerald-500/15 text-emerald-300";
 }
 
-function splitUrl(raw: string): { host: string; path: string } {
+export function splitUrl(raw: string): { host: string; path: string } {
+  // A failed HTTPS CONNECT is recorded as its "host:port" target, which URL would read as a scheme.
+  const authority = /^([^\s/?#:]+):(\d+)$/.exec(raw);
+  if (authority) return { host: authority[2] === "443" ? authority[1]! : raw, path: raw };
   try {
     const url = new URL(raw);
     return { host: url.host, path: `${url.pathname}${url.search}` || "/" };
@@ -202,6 +205,8 @@ export function RequestRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [body, setBody] = useState<CapturedBody | null>(null);
+  const [bodyError, setBodyError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [loading, setLoading] = useState(false);
   const { host, path } = splitUrl(request.url);
   const payload = Math.max(request.requestBytes, request.responseBytes);
@@ -212,14 +217,16 @@ export function RequestRow({
     if (!expanded || !settled) return;
     let active = true;
     setBody(null);
+    setBodyError(null);
     setLoading(true);
-    void fetchCapturedBody(request.id, udid).then((captured) => {
+    void fetchCapturedBody(request.id, udid).then((lookup) => {
       if (!active) return;
-      setBody(captured);
+      if ("error" in lookup) setBodyError(lookup.error);
+      else setBody(lookup.body);
       setLoading(false);
     });
     return () => { active = false; };
-  }, [expanded, settled, request.id, request.startedAt, udid]);
+  }, [expanded, settled, request.id, request.startedAt, udid, attempt]);
 
   return (
     <div className="py-1.5 border-b border-white/5 last:border-b-0">
@@ -252,6 +259,18 @@ export function RequestRow({
           )}
           <RequestFacts request={request} />
           {loading && <span className="text-[10px] text-white/30">Loading…</span>}
+          {bodyError && (
+            <span className="flex items-center gap-2 text-[10px] leading-snug text-red-300">
+              Headers and body could not be loaded: {bodyError}
+              <button
+                type="button"
+                onClick={() => setAttempt((n) => n + 1)}
+                className="rounded px-1.5 py-0.5 text-white/60 hover:bg-white/10"
+              >
+                Retry
+              </button>
+            </span>
+          )}
           {body && <BodyDetail body={body} />}
         </div>
       )}

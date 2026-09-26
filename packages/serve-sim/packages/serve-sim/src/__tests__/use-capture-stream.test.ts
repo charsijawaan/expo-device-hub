@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyCaptureEvent, type CapturedRequest } from "../client/hooks/use-capture-stream";
+import { applyCaptureEvent, readCapturedBodyResult, type CapturedRequest } from "../client/hooks/use-capture-stream";
+import { splitUrl } from "../client/components/network-capture-requests";
 import type { CaptureMeta } from "../capture/store";
 
 const request = (id: string): CapturedRequest => ({
@@ -28,5 +29,22 @@ describe("applyCaptureEvent", () => {
   test("drops a request the server evicted", () => {
     const list = [request("r1"), request("r2")];
     expect(applyCaptureEvent(list, { type: "evicted", id: "r1" }).map((r) => r.id)).toEqual(["r2"]);
+  });
+});
+
+describe("readCapturedBodyResult", () => {
+  test("tells a failed lookup apart from a request with no body", () => {
+    expect(readCapturedBodyResult({ exitCode: 0, stdout: "", stderr: "" })).toEqual({ body: null });
+    expect(readCapturedBodyResult({ exitCode: 1, stdout: "", stderr: "socket closed" })).toEqual({ error: "socket closed" });
+    expect(readCapturedBodyResult({ exitCode: 0, stdout: "{not json", stderr: "" })).toEqual({ error: "The body could not be read." });
+    expect(readCapturedBodyResult({ exitCode: 0, stdout: '{"requestBody":"a"}', stderr: "" })).toEqual({ body: { requestBody: "a" } as never });
+  });
+});
+
+describe("splitUrl", () => {
+  test("keeps a failed CONNECT's destination", () => {
+    expect(splitUrl("api.example.com:443")).toEqual({ host: "api.example.com", path: "api.example.com:443" });
+    expect(splitUrl("api.example.com:8443")).toEqual({ host: "api.example.com:8443", path: "api.example.com:8443" });
+    expect(splitUrl("https://api.example.com/v1?x=1")).toEqual({ host: "api.example.com", path: "/v1?x=1" });
   });
 });
