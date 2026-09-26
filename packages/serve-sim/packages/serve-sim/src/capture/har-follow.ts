@@ -90,6 +90,14 @@ async function fetchBody(
   }
 }
 
+function isClearedEvent(data: string): boolean {
+  try {
+    return (JSON.parse(data) as { type?: string }).type === "cleared";
+  } catch {
+    return false;
+  }
+}
+
 function isAbort(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError";
 }
@@ -219,6 +227,8 @@ export async function followCaptureHar(opts: FollowCaptureHarOptions): Promise<F
         const unavailable = captureUnavailable(data);
         if (unavailable) throw new Error(unavailable);
         disk.recordEvent(data);
+        // A new session starts ids at r1 again, so ids seeded from the old one no longer match.
+        if (isClearedEvent(data)) seeded.clear();
         const finished = parseFinishedCaptureRequest(data);
         if (!finished || seeded.has(finished.id)) continue;
         const body = await fetchBody(

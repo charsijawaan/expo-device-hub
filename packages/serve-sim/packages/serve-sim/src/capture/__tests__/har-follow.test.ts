@@ -240,6 +240,44 @@ describe("followCaptureHar started late", () => {
   });
 });
 
+describe("followCaptureHar across a capture restart", () => {
+  it("keeps a new session's requests whose ids repeat the old session's", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "serve-sim-har-restart-"));
+    const outPath = join(dir, "session.har");
+    const request = (id: string, startedAt: number, url: string) => ({
+      id, method: "GET", url, status: 200, mimeType: "text/plain",
+      requestBytes: 0, responseBytes: 2, startedAt, ttfbMs: 1, durationMs: 2, failure: null,
+    });
+    const seed = `${JSON.stringify(toHarEntry(request("r1", 1, "https://a.test/old")))}\n`;
+    // The old session's r1 replays, then capture restarts: "cleared", and the new session's r1.
+    const frames = [
+      `data: ${JSON.stringify({ type: "finished", request: request("r1", 1, "https://a.test/old") })}\n\n`,
+      `data: ${JSON.stringify({ type: "cleared" })}\n\n`,
+      `data: ${JSON.stringify({ type: "finished", request: request("r1", 5, "https://a.test/new") })}\n\n`,
+    ];
+    try {
+      await followCaptureHar({
+        baseUrl: "http://127.0.0.1:3999", device: "D", outPath, token: "test", flushIntervalMs: 50,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.includes("/network-capture.ndjson")) return new Response(seed);
+          if (url.includes("/network-capture/")) return new Response("null");
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (const frame of frames) controller.enqueue(new TextEncoder().encode(frame));
+              controller.close();
+            },
+          }));
+        },
+      });
+      const har = JSON.parse(readFileSync(outPath, "utf8")) as { log: { entries: { request: { url: string } }[] } };
+      expect(har.log.entries.map((entry) => entry.request.url)).toEqual(["https://a.test/old", "https://a.test/new"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("followCaptureHar under an embedded mount", () => {
   it("reads the stream and bodies below the mount prefix", async () => {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-har-mount-"));
