@@ -1856,6 +1856,13 @@ export function handleNetworkCaptureRequest(
     res.end("No serve-sim device");
     return;
   }
+  // HEAD gets the stream's headers only. Subscribing would leave a listener and a heartbeat that
+  // nothing closes, since a HEAD response ends without the client closing the stream.
+  if ((req.method ?? "GET").toUpperCase() === "HEAD") {
+    res.writeHead(200, { "Content-Type": "text/event-stream", ...NO_STORE });
+    res.end();
+    return;
+  }
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     ...NO_STORE,

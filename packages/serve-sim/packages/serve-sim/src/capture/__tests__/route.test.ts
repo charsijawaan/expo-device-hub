@@ -197,6 +197,27 @@ describe("handleNetworkCaptureRequest", () => {
   });
 });
 
+describe("handleNetworkCaptureRequest HEAD", () => {
+  test("answers with headers and never subscribes", () => {
+    let subscribed = 0;
+    const runtime = {
+      subscribe: () => {
+        subscribed++;
+        return { meta: {}, unsubscribe: () => {} };
+      },
+      storeFor: () => null,
+      refreshForDevice: async () => ({}),
+    } as unknown as Parameters<typeof handleNetworkCaptureRequest>[3];
+    const { req } = createFakeReq();
+    (req as unknown as { method: string }).method = "HEAD";
+    const { res, writes, status } = createFakeRes();
+    handleNetworkCaptureRequest(req, res, inProcessServeSimState("UDID-HEAD", 4000), runtime);
+    expect(status()).toBe(200);
+    expect(writes.join("")).toBe("");
+    expect(subscribed).toBe(0);
+  });
+});
+
 describe("handleCaptureBodyRequest", () => {
   test("returns the stored headers and bodies for a captured request", async () => {
     const { runtime } = stubRuntime();
