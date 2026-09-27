@@ -171,6 +171,13 @@ describe("writeSimPasteboard", () => {
     );
   });
 
+  test("checks once more when a copy finishes during the final wait", async () => {
+    let count = 5;
+    const waiting = waitForPasteboardChange(async () => count, count, 100);
+    setTimeout(() => { count = 6; }, 90);
+    await waiting;
+  });
+
   test("holds the device lock through the paste shortcut", async () => {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-paste-lock-test-"));
     const log = join(dir, "writes");

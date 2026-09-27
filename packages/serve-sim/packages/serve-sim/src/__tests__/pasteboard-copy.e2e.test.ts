@@ -26,6 +26,7 @@ const middleware = simMiddleware({ basePath: "/preview", execToken: TEST_TOKEN }
 const udid = firstBootedIosSim();
 const copyReady = !!(udid && pasteboardDylib && nativeAddonExists());
 requireE2E("pasteboard copy E2E", copyReady);
+requireE2E("pasteboard copy user-app E2E", !!(copyReady && pasteboardFixture));
 const describeCopy = copyReady ? describe : describe.skip;
 const describeUserApp = copyReady && pasteboardFixture ? describe : describe.skip;
 const SAFARI_COPY_TEXT = "serve-sim-safari-copy-probe";

@@ -123,12 +123,12 @@ export async function waitForPasteboardChange(
   timeoutMs = COPY_CHANGE_TIMEOUT_MS,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  do {
+  while (true) {
     if (await readCount() !== baseline) return;
     const remaining = deadline - Date.now();
-    if (remaining > 0) await sleep(Math.min(COPY_CHANGE_POLL_MS, remaining));
-  } while (Date.now() < deadline);
-  throw new PasteboardCopyTimeoutError();
+    if (remaining <= 0) throw new PasteboardCopyTimeoutError();
+    await sleep(Math.min(COPY_CHANGE_POLL_MS, remaining));
+  }
 }
 
 /**
