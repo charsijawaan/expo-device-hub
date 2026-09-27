@@ -25,10 +25,16 @@ export function requestFramePermission(permission: FramePermission): void {
 /** True once, on the first load after the embedding page granted a permission this page asked for. */
 export function takeFramePermissionGrant(permission: FramePermission): boolean {
   try {
-    if (!window.sessionStorage.getItem(`${REQUESTED_KEY}${permission}`) || framePolicyBlocks(permission)) {
+    const key = `${REQUESTED_KEY}${permission}`;
+    if (!window.sessionStorage.getItem(key)) return false;
+    if (window.parent === window) {
+      window.sessionStorage.removeItem(key);
       return false;
     }
-    window.sessionStorage.removeItem(`${REQUESTED_KEY}${permission}`);
+    const doc: PolicyDocument = document;
+    const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+    if (!policy?.allowsFeature(permission)) return false;
+    window.sessionStorage.removeItem(key);
     return true;
   } catch {
     return false;

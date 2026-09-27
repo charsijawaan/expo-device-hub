@@ -1260,26 +1260,17 @@ export class DeviceSession {
    *
    * The shortcut takes an input turn like a viewer's keys, so no other input lands inside the
    * chord. The pasteboard lock is taken inside that turn, in the same order as paste, so the two
-   * cannot deadlock, and it is held through the read. The turn ends once the chord is out, so the
-   * settle and the read do not hold up other viewers' input.
+   * cannot deadlock, and it is held through the read. The turn also lasts through the read, so
+   * another viewer's Copy cannot replace the text before this request captures it.
    */
   async copyPasteboard(): Promise<PasteboardReadResult> {
-    let shortcutSent!: () => void;
-    let shortcutFailed!: (error: unknown) => void;
-    const sent = new Promise<void>((resolve, reject) => {
-      shortcutSent = resolve;
-      shortcutFailed = reject;
-    });
-    let copied: Promise<PasteboardReadResult> | undefined;
+    let copied: PasteboardReadResult | undefined;
     const turn = this.queueInputOperation(this.serverInput, async () => {
       // The session can stop while the copy waits for its turn.
       if (this.phase !== "running" || this.hid.inputUnavailable) throw new Error("Simulator input is unavailable");
-      copied = copyFromSim(this.udid, async () => {
+      copied = await copyFromSim(this.udid, async () => {
         await this.sendCommandShortcut("KeyC", null);
-        shortcutSent();
       });
-      copied.catch(shortcutFailed);
-      await sent;
     });
     if (!turn) throw new Error("Simulator input is unavailable");
     await turn;

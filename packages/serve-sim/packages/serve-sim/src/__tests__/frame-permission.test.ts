@@ -4,6 +4,7 @@ import { framePolicyBlocks, requestFramePermission, takeFramePermissionGrant } f
 type Frame = {
   posted: Array<{ message: unknown; targetOrigin: string }>;
   allow: (features: string[]) => void;
+  setFramed: (framed: boolean) => void;
 };
 
 function withGlobals(values: Record<string, unknown>, run: () => void): void {
@@ -34,7 +35,12 @@ function withFrame(policy: "permissionsPolicy" | "featurePolicy" | null, allowed
       removeItem: (key: string) => stored.delete(key),
     },
   };
-  withGlobals({ window: win, document: doc }, () => run({ posted, allow: (next) => { features = next; } }));
+  const parent = win.parent;
+  withGlobals({ window: win, document: doc }, () => run({
+    posted,
+    allow: (next) => { features = next; },
+    setFramed: (framed) => { (win as { parent: unknown }).parent = framed ? parent : win; },
+  }));
 }
 
 describe("framePolicyBlocks", () => {
@@ -94,6 +100,24 @@ describe("frame permission requests", () => {
       frame.allow(["clipboard-read"]);
       expect(takeFramePermissionGrant("camera")).toBe(false);
       expect(takeFramePermissionGrant("clipboard-read")).toBe(true);
+      expect(takeFramePermissionGrant("clipboard-read")).toBe(false);
+    });
+  });
+
+  test("does not report a declined frame request as granted after opening the preview directly", () => {
+    withFrame("permissionsPolicy", [], (frame) => {
+      requestFramePermission("clipboard-read");
+      frame.setFramed(false);
+      expect(takeFramePermissionGrant("clipboard-read")).toBe(false);
+      frame.setFramed(true);
+      frame.allow(["clipboard-read"]);
+      expect(takeFramePermissionGrant("clipboard-read")).toBe(false);
+    });
+  });
+
+  test("does not announce a grant when the frame policy cannot be inspected", () => {
+    withFrame(null, [], () => {
+      requestFramePermission("clipboard-read");
       expect(takeFramePermissionGrant("clipboard-read")).toBe(false);
     });
   });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast as sonnerToast } from "sonner";
 import { ClipboardToastContent } from "../components/app-toasts";
 import { framePolicyBlocks, requestFramePermission, takeFramePermissionGrant } from "../utils/frame-permission";
@@ -47,7 +47,9 @@ export function useClipboardToast(
   waitForPriorInput: () => Promise<void>,
   sendTextToSim: (text: string) => Promise<boolean>,
 ) {
+  const pasteGeneration = useRef(0);
   const copyFromSim = useCallback(async () => {
+    sonnerToast.dismiss(MANUAL_TOAST_ID);
     renderToast("pending", "Reading simulator clipboard…", COPY_TOAST_ID);
     try {
       await waitForPriorInput();
@@ -103,15 +105,18 @@ export function useClipboardToast(
 
   const pasteText = useCallback(
     async (text: string) => {
+      const generation = ++pasteGeneration.current;
       renderToast("pending", "Pasting into the simulator…", PASTE_TOAST_ID);
       try {
         const ok = await sendTextToSim(text);
+        if (generation !== pasteGeneration.current) return;
         renderToast(
           ok ? "copied" : "error",
           ok ? "Pasted into simulator" : "Could not write to the simulator clipboard",
           PASTE_TOAST_ID,
         );
       } catch (error) {
+        if (generation !== pasteGeneration.current) return;
         renderToast(
           "error",
           error instanceof Error ? error.message : "Could not write to the simulator clipboard",
