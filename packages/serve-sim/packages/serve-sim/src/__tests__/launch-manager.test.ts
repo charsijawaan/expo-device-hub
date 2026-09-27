@@ -591,6 +591,44 @@ describe("startup capability loading", () => {
     }
   });
 
+  test("last session start decides the shared clipboard reader state", async () => {
+    const first = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    clearRegisteredCapabilities();
+    registerCapability({
+      name: "clipboard", defaultEnabled: true, scope: "allApps",
+      async setEnabled() { return { dylib: "/clipboard.dylib" }; },
+    });
+    try {
+      await withShimsAsync({ xcrun: "#!/bin/sh\nexit 0\n" }, async () => {
+        // A disabled, then B starts with defaults: B's later enable wins.
+        writeRawState(JSON.stringify({
+          launchArgs: [], capabilities: {}, disabledCapabilities: { clipboard: [first.pid!] },
+        }));
+        expect(await applyDefaultCapabilities(UDID, null)).toContain("clipboard");
+        expect(readLaunchState(UDID)?.capabilities.clipboard?.ownerPid).toBe(process.pid);
+        expect(readLaunchState(UDID)?.disabledCapabilities?.clipboard).toBeUndefined();
+
+        // A enabled, then B disables: B's later disable wins.
+        writeRawState(JSON.stringify({
+          launchArgs: [], capabilities: {
+            clipboard: {
+              name: "clipboard", scope: "allApps", dylib: "/clipboard.dylib",
+              bundleId: null, ownerPid: first.pid,
+            },
+          },
+        }));
+        expect(await applyDefaultCapabilities(UDID, null, { disable: ["clipboard"] })).toEqual([]);
+        expect(readLaunchState(UDID)?.capabilities.clipboard).toBeUndefined();
+        expect(readLaunchState(UDID)?.disabledCapabilities?.clipboard).toEqual([process.pid]);
+        expect(readFileSync(capabilityConfigPath(UDID), "utf-8")).not.toContain("/clipboard.dylib");
+      });
+    } finally {
+      first.kill("SIGKILL");
+      clearRegisteredCapabilities();
+      forgetDisabledCapabilities(UDID);
+    }
+  });
+
   test("defaults do not restart a remembered app and explicit launch starts once", async () => {
     const log = join(stateDir(), "simctl-startup-calls");
     const quotedLog = "'" + log.replaceAll("'", "'\\''") + "'";

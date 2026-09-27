@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { DeviceSession } from "../device-session";
+import { NativeHid } from "../native";
 import { HID_USAGE_BY_CODE } from "../client/utils/hid";
 import { withShimsAsync } from "./helpers";
 
@@ -20,6 +21,10 @@ function session(failOn?: (call: KeyCall) => boolean, udid = "SESSION-TEST") {
   const hid = {
     inputUnavailable: false,
     async key(type: "down" | "up", usage: number) {
+      if (failOn?.([type, usage])) throw new Error("HID failed");
+      calls.push([type, usage]);
+    },
+    async keyChecked(type: "down" | "up", usage: number) {
       if (failOn?.([type, usage])) throw new Error("HID failed");
       calls.push([type, usage]);
     },
@@ -60,6 +65,22 @@ function session(failOn?: (call: KeyCall) => boolean, udid = "SESSION-TEST") {
   };
   return { calls, hid, internals, viewer };
 }
+
+test("checked shortcut keys surface a native rejection while ordinary input remains guarded", async () => {
+  const hid = Object.create(NativeHid.prototype) as NativeHid;
+  Object.assign(hid, {
+    handle: { key: () => Promise.reject(new Error("native key rejected")) },
+    setupFailed: false,
+  });
+  const previousError = console.error;
+  console.error = () => {};
+  try {
+    await expect(hid.key("down", KeyV)).resolves.toBeUndefined();
+    await expect(hid.keyChecked("down", KeyV)).rejects.toThrow("native key rejected");
+  } finally {
+    console.error = previousError;
+  }
+});
 
 describe("sendPasteShortcut", () => {
   test("lifts a modifier another viewer holds and keeps its owner", async () => {

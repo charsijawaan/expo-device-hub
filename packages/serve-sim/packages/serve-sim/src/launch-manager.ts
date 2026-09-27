@@ -400,11 +400,22 @@ export async function applyDefaultCapabilities(
     for (const name of overrides.disable ?? []) {
       disabledCapabilities[name] = [...(disabledCapabilities[name] ?? []), process.pid];
     }
+    // The most recent session start decides whether a default reader is armed.
+    // A later default enable supersedes an earlier session's disable, while a
+    // later explicit disable removes a reader already armed by another session.
+    for (const definition of definitions) {
+      if (definition.name === "clipboard") delete disabledCapabilities.clipboard;
+    }
+    const capabilities = { ...previous?.capabilities };
+    if (overrides.disable?.includes("clipboard")) delete capabilities.clipboard;
     if (previous || Object.keys(disabledCapabilities).length > 0) {
-      writeLaunchState(udid, {
-        ...(previous ?? { launchArgs: [], capabilities: {} }),
+      const state = {
+        ...(previous ?? { launchArgs: [] }),
+        capabilities,
         disabledCapabilities,
-      });
+      };
+      writeLaunchState(udid, state);
+      commitCapabilityConfig(udid, renderCapabilityConfig(state));
     }
     const resolved: Capability[] = [];
     for (const definition of definitions) {
