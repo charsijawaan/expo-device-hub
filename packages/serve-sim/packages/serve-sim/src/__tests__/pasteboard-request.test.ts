@@ -220,7 +220,7 @@ describe("writeSimPasteboard", () => {
     const xcrun = `#!/bin/sh
 if [ "$2" = pbpaste ]; then cat ${quoted}
 elif [ "$5" = --change-count ]; then cat ${quotedCount}
-else cat > ${quoted}; printf '1' > ${quotedCount}
+else cat > ${quoted}; count=$(cat ${quotedCount} 2>/dev/null || printf 0); printf '%s' "$((count + 1))" > ${quotedCount}
 fi
 `;
     let release!: () => void;
@@ -234,13 +234,14 @@ fi
         const copied = copyFromSim(udid, async () => {
           shortcutStarted();
           await gate;
-          writeFileSync(count, "2");
+          writeFileSync(board, "alpha");
+          writeFileSync(count, String(Number(readFileSync(count, "utf8")) + 1));
         });
         await shortcut;
         const other = writeSimPasteboard(udid, "beta");
         try {
           await Bun.sleep(100);
-          expect(readFileSync(board, "utf8")).toBe("alpha");
+          expect(readFileSync(board, "utf8").startsWith("serve-sim-copy-")).toBe(true);
         } finally {
           release();
         }

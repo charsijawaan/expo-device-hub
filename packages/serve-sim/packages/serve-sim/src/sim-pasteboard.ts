@@ -117,6 +117,14 @@ async function pasteboardChangeCount(udid: string): Promise<number> {
   return count;
 }
 
+async function pasteboardTextSnapshot(udid: string): Promise<string | null> {
+  const text = await simctlRaw(["pbpaste", udid], {
+    timeout: 3_000,
+    maxBuffer: MAX_PASTEBOARD_TEXT_BYTES,
+  }).catch(() => null);
+  return text || null;
+}
+
 export async function waitForPasteboardChange(
   readCount: () => Promise<number>,
   baseline: number,
@@ -140,10 +148,25 @@ export function copyFromSim(
   sendCopyShortcut: () => Promise<void>,
 ): Promise<PasteboardReadResult> {
   return withSimPasteboardLock(udid, async () => {
+    // Some apps skip a pasteboard write when copying the same text twice. Move the pasteboard
+    // away from its current text before the shortcut so a real Copy must replace it.
+    const previousText = await pasteboardTextSnapshot(udid);
+    const marker = previousText === null ? null : `serve-sim-copy-${randomUUID()}`;
+    if (marker !== null) await writeSimPasteboardUnlocked(udid, marker);
     const before = await pasteboardChangeCount(udid);
-    await sendCopyShortcut();
-    await waitForPasteboardChange(() => pasteboardChangeCount(udid), before);
-    return readSimPasteboardResult(udid);
+    try {
+      await sendCopyShortcut();
+      await waitForPasteboardChange(() => pasteboardChangeCount(udid), before);
+      const result = await readSimPasteboardResult(udid);
+      if (result.text === marker) throw new PasteboardCopyTimeoutError();
+      return result;
+    } catch (error) {
+      // Keep the user's prior text if the app did not replace the temporary marker.
+      if (marker !== null && await pasteboardChangeCount(udid) === before) {
+        await writeSimPasteboardUnlocked(udid, previousText!);
+      }
+      throw error;
+    }
   });
 }
 
