@@ -220,13 +220,13 @@ describe("copy shortcut", () => {
 
 describe("copyPasteboard", () => {
   // A one-slot simulator pasteboard behind a fake xcrun; pbpaste can be slowed down.
-  async function withPasteboard(text: string, pbpasteDelay: string, run: (udid: string) => Promise<void>) {
+  async function withPasteboard(text: string, pbpasteDelay: string, run: (udid: string, board: string) => Promise<void>) {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-copy-turn-test-"));
     const board = join(dir, "pasteboard");
     writeFileSync(board, text);
     const xcrun = `#!/bin/sh\nif [ "$2" = pbpaste ]; then sleep ${pbpasteDelay}; cat '${board}'; fi\n`;
     try {
-      await withShimsAsync({ xcrun }, () => run(`COPY-TURN-TEST-${process.pid}-${Math.random()}`));
+      await withShimsAsync({ xcrun }, () => run(`COPY-TURN-TEST-${process.pid}-${Math.random()}`, board));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -254,21 +254,27 @@ describe("copyPasteboard", () => {
     });
   });
 
-  test("lets other input run while it reads", async () => {
-    await withPasteboard("copied", "0.8", async (udid) => {
+  test("keeps another viewer's copy behind the pasteboard read", async () => {
+    await withPasteboard("copied", "0.8", async (udid, board) => {
       const { internals, viewer } = session(undefined, udid);
       const b = viewer();
       let copyDone = false;
+      let viewerCopyDone = false;
       const copy = internals.copyPasteboard().then((result) => {
         copyDone = true;
         return result;
       });
       await Bun.sleep(300); // shortcut and settle are done; pbpaste runs for 0.8 s more
-      const queuedAt = performance.now();
-      await internals.queueInputOperation(b, async () => {});
-      expect(performance.now() - queuedAt).toBeLessThan(200);
+      const viewerCopy = internals.queueInputOperation(b, async () => {
+        writeFileSync(board, "newer copy");
+        viewerCopyDone = true;
+      });
+      await Bun.sleep(50);
       expect(copyDone).toBe(false);
+      expect(viewerCopyDone).toBe(false);
       expect((await copy).text).toBe("copied");
+      await viewerCopy;
+      expect(viewerCopyDone).toBe(true);
     });
   });
 
