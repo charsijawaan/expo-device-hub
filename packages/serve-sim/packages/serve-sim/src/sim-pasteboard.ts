@@ -346,18 +346,23 @@ async function requestInjectedPasteboardUnlocked(
   const valuePath = join(tmpDir, "serve-sim-pasteboard.txt");
   const donePath = `${valuePath}.done`;
   const requestPath = join(tmpDir, "serve-sim-pasteboard.request");
-  // A request that timed out can still be answered afterwards, and answering it
-  // consumes the next request. The nonce tells our answer from that one.
+  const publishRequest = async (nonce: string) => {
+    const pending = `${requestPath}.pending`;
+    await fs.writeFile(pending, nonce);
+    await fs.rename(pending, requestPath);
+  };
+  // A timed-out request can still publish a stale answer. The nonce identifies
+  // the one we asked for, and the rename gives the reader a complete request.
   const nonce = randomUUID();
   await fs.rm(donePath, { force: true });
   await fs.rm(valuePath, { force: true });
-  await fs.writeFile(requestPath, nonce);
+  await publishRequest(nonce);
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const answer = await takeInjectedAnswer(valuePath, donePath);
     if (answer?.nonce === nonce) return answer.text;
-    if (answer) await fs.writeFile(requestPath, nonce);
+    if (answer) await publishRequest(nonce);
     await sleep(INJECTED_POLL_MS);
   }
   await fs.rm(requestPath, { force: true });
