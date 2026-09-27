@@ -149,6 +149,10 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return target.isContentEditable;
 }
 
+function isActionTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && !!target.closest("button, [role='menuitem']");
+}
+
 function previewConfigKey(config: PreviewConfig | null): string {
   return config
     ? `${config.device}:${config.pid}:${config.streamUrl}:${config.wsUrl}:${JSON.stringify(config.streamSettings ?? null)}`
@@ -1494,7 +1498,8 @@ function AppWithConfig({
       const simFocused = simFocusedRef.current;
       const keyboardOpen = keyboardOpenRef.current;
       // Only new presses: a key held while the simulator had focus still has to be released there.
-      if (type === "down" && isTypingTarget(e.target) && !keyboardOpen) return;
+      if (type === "down" && (e.defaultPrevented || isActionTarget(e.target) ||
+        (isTypingTarget(e.target) && !keyboardOpen))) return;
       if (simFocused && !keyboardOpen) {
         // Leave Command+digits to browser tab switching. Use physical codes so
         // Option+Shift's layout-specific characters do not affect pose lookup.

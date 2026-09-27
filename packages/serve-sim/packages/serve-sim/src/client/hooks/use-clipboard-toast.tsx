@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { toast as sonnerToast } from "sonner";
 import { ClipboardToastContent } from "../components/app-toasts";
 import { readTextFromBrowserClipboard } from "../utils/sim-clipboard";
@@ -19,15 +19,19 @@ function renderToast(status: ClipboardToast["status"], message: string, onPaste?
 }
 
 export function useClipboardToast(sendTextToSim: (text: string) => Promise<boolean>) {
+  const pasteGeneration = useRef(0);
   const pasteText = useCallback(async (text: string) => {
+    const generation = ++pasteGeneration.current;
     renderToast("pending", "Pasting into the simulator…");
     try {
       const ok = await sendTextToSim(text);
+      if (generation !== pasteGeneration.current) return;
       renderToast(
         ok ? "copied" : "error",
         ok ? "Pasted into simulator" : "Could not write to the simulator clipboard",
       );
     } catch (error) {
+      if (generation !== pasteGeneration.current) return;
       renderToast("error", error instanceof Error ? error.message : "Could not write to the simulator clipboard");
     }
   }, [sendTextToSim]);
