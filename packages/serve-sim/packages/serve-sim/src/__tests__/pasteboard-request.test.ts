@@ -218,7 +218,8 @@ describe("writeSimPasteboard", () => {
     const quotedCount = "'" + count.replaceAll("'", "'\\''") + "'";
     // A one-slot simulator pasteboard: pbpaste prints it, pbcopy replaces it.
     const xcrun = `#!/bin/sh
-if [ "$2" = pbpaste ]; then cat ${quoted}
+if [ "$2" = get_app_container ]; then exit 1
+elif [ "$2" = pbpaste ]; then cat ${quoted}
 elif [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
 elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < ${quoted}
 elif [ "$5" = --read-text ]; then cat ${quoted}
@@ -264,7 +265,8 @@ fi
     const board = join(dir, "pasteboard");
     writeFileSync(board, "previous text");
     const xcrun = `#!/bin/sh
-if [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
+if [ "$2" = get_app_container ]; then exit 1
+elif [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
 elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < '${board}'
 elif [ "$5" = --read-text ]; then cat '${board}'
 elif [ "$5" = --restore ]; then base64 -D > '${board}'
@@ -278,6 +280,43 @@ fi
           throw new Error("shortcut should not run");
         })).rejects.toThrow();
         expect(readFileSync(board, "utf8")).toBe("previous text");
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("installs the Copy helper only when a simulator has lost it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "serve-sim-copy-install-test-"));
+    const board = join(dir, "pasteboard");
+    const count = join(dir, "count");
+    const installed = join(dir, "installed");
+    const installs = join(dir, "installs");
+    writeFileSync(board, "copied");
+    writeFileSync(count, "0");
+    const xcrun = `#!/bin/sh
+if [ "$2" = get_app_container ]; then [ -f '${installed}' ] && printf '/sim/app\\n' || exit 1
+elif [ "$2" = install ]; then touch '${installed}'; printf 'install\\n' >> '${installs}'
+elif [ "$2" = privacy ]; then exit 0
+elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < '${board}'
+elif [ "$5" = --read-text ]; then cat '${board}'
+elif [ "$5" = --change-count ]; then cat '${count}'
+else cat > '${board}'; current=$(cat '${count}'); printf '%s' "$((current + 1))" > '${count}'
+fi
+`;
+    try {
+      await withShimsAsync({ xcrun }, async () => {
+        const udid = `COPY-INSTALL-TEST-${process.pid}`;
+        const copy = () => copyFromSim(udid, async () => {
+          writeFileSync(board, "copied");
+          writeFileSync(count, String(Number(readFileSync(count, "utf8")) + 1));
+        });
+        await copy();
+        await copy();
+        expect(readFileSync(installs, "utf8")).toBe("install\n");
+        rmSync(installed);
+        await copy();
+        expect(readFileSync(installs, "utf8")).toBe("install\ninstall\n");
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
