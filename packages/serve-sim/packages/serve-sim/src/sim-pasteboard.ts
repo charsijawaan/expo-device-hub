@@ -101,6 +101,7 @@ export function pasteTextIntoSim(
 
 const COPY_CHANGE_TIMEOUT_MS = 5_000;
 const COPY_CHANGE_POLL_MS = 75;
+const COPY_CHANGE_QUIET_MS = 150;
 
 export class PasteboardCopyTimeoutError extends Error {
   constructor() {
@@ -123,17 +124,25 @@ export async function waitForPasteboardChange(
   timeoutMs = COPY_CHANGE_TIMEOUT_MS,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let lastCount = baseline;
+  let lastChangeAt = 0;
   while (true) {
-    if (await readCount() !== baseline) return;
-    const remaining = deadline - Date.now();
+    const count = await readCount();
+    const now = Date.now();
+    if (count !== baseline && count !== lastCount) {
+      lastCount = count;
+      lastChangeAt = now;
+    }
+    if (lastCount !== baseline && now - lastChangeAt >= COPY_CHANGE_QUIET_MS) return;
+    const remaining = lastCount === baseline ? deadline - now : COPY_CHANGE_QUIET_MS - (now - lastChangeAt);
     if (remaining <= 0) throw new PasteboardCopyTimeoutError();
     await sleep(Math.min(COPY_CHANGE_POLL_MS, remaining));
   }
 }
 
 /**
- * Press Command+C and read only after the app changes the pasteboard. Paste and writes take the
- * same lock, so another viewer's copy or paste cannot replace the text before the read.
+ * Press Command+C and read after the pasteboard changes and settles briefly. Paste and writes
+ * take the same lock, so another viewer's copy or paste cannot replace the text before the read.
  */
 export function copyFromSim(
   udid: string,
