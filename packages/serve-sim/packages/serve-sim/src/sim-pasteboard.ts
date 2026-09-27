@@ -99,20 +99,50 @@ export function pasteTextIntoSim(
   });
 }
 
-/** How long the app gets to write its pasteboard after it receives Command+C. */
-const COPY_SETTLE_MS = 150;
+const COPY_CHANGE_TIMEOUT_MS = 5_000;
+const COPY_CHANGE_POLL_MS = 75;
+
+export class PasteboardCopyTimeoutError extends Error {
+  constructor() {
+    super("The simulator app did not update the clipboard after Copy. Try again after selecting text.");
+  }
+}
+
+async function pasteboardChangeCount(udid: string): Promise<number> {
+  const tool = locatePasteboardTool() ?? buildPasteboardTool();
+  const output = await simctl(["spawn", udid, tool, "--change-count"], 3_000);
+  if (!/^\d+$/.test(output)) throw new Error("Invalid simulator pasteboard change count");
+  const count = Number(output);
+  if (!Number.isSafeInteger(count)) throw new Error("Invalid simulator pasteboard change count");
+  return count;
+}
+
+export async function waitForPasteboardChange(
+  readCount: () => Promise<number>,
+  baseline: number,
+  timeoutMs = COPY_CHANGE_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await readCount() !== baseline) return;
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await sleep(Math.min(COPY_CHANGE_POLL_MS, remaining));
+  } while (Date.now() < deadline);
+  throw new PasteboardCopyTimeoutError();
+}
 
 /**
- * Press Command+C and read the pasteboard as one step. Paste and writes take the same lock, so
- * another viewer's copy or paste cannot replace the text between the shortcut and the read.
+ * Press Command+C and read only after the app changes the pasteboard. Paste and writes take the
+ * same lock, so another viewer's copy or paste cannot replace the text before the read.
  */
 export function copyFromSim(
   udid: string,
   sendCopyShortcut: () => Promise<void>,
 ): Promise<PasteboardReadResult> {
   return withSimPasteboardLock(udid, async () => {
+    const before = await pasteboardChangeCount(udid);
     await sendCopyShortcut();
-    await new Promise((resolve) => setTimeout(resolve, COPY_SETTLE_MS));
+    await waitForPasteboardChange(() => pasteboardChangeCount(udid), before);
     return readSimPasteboardResult(udid);
   });
 }

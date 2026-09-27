@@ -1,8 +1,17 @@
 #import <UIKit/UIKit.h>
+#include <string.h>
 
 // Unlike simctl pbcopy, this in-simulator writer works without a GUI login.
-int main(void) {
+int main(int argc, char *argv[]) {
   @autoreleasepool {
+    if (argc == 2 && strcmp(argv[1], "--change-count") == 0) {
+      printf("%ld\n", (long)UIPasteboard.generalPasteboard.changeCount);
+      return 0;
+    }
+    if (argc != 1) {
+      fputs("usage: serve-sim-pasteboard [--change-count]\n", stderr);
+      return 2;
+    }
     NSData *data = [NSFileHandle.fileHandleWithStandardInput readDataToEndOfFile];
     NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!text) {
