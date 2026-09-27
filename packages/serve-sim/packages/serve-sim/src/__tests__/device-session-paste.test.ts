@@ -249,7 +249,16 @@ describe("copyPasteboard", () => {
     const changeCount = join(dir, "change-count");
     writeFileSync(board, text);
     writeFileSync(changeCount, "0");
-    const xcrun = `#!/bin/sh\nif [ "$5" = --change-count ]; then cat '${changeCount}'; elif [ "$2" = pbpaste ]; then sleep ${pbpasteDelay}; cat '${board}'; else cat > '${board}'; count=$(cat '${changeCount}'); printf '%s' "$((count + 1))" > '${changeCount}'; fi\n`;
+    const xcrun = `#!/bin/sh
+if [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
+elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < '${board}'
+elif [ "$5" = --read-text ]; then sleep ${pbpasteDelay}; cat '${board}'
+elif [ "$5" = --restore ]; then base64 -D > '${board}'; count=$(cat '${changeCount}'); printf '%s' "$((count + 1))" > '${changeCount}'
+elif [ "$5" = --change-count ]; then cat '${changeCount}'
+elif [ "$2" = pbpaste ]; then sleep ${pbpasteDelay}; cat '${board}'
+else cat > '${board}'; count=$(cat '${changeCount}'); printf '%s' "$((count + 1))" > '${changeCount}'
+fi
+`;
     let resolveShortcut!: () => void;
     const shortcutDone = new Promise<void>((resolve) => { resolveShortcut = resolve; });
     const markCopy = ([type, usage]: KeyCall) => {
@@ -299,7 +308,7 @@ describe("copyPasteboard", () => {
         return result;
       });
       await shortcutDone;
-      await Bun.sleep(100); // the 0.8 s pasteboard read is still in progress
+      await Bun.sleep(100); // the 0.8 s text read is still in progress
       const viewerCopy = internals.queueInputOperation(b, async () => {
         writeFileSync(board, "newer copy");
         viewerCopyDone = true;

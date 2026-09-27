@@ -101,6 +101,8 @@ export function pasteTextIntoSim(
 
 const COPY_CHANGE_TIMEOUT_MS = 5_000;
 const COPY_CHANGE_POLL_MS = 75;
+const PASTEBOARD_APP_BUNDLE = "com.expo.serve-sim-pasteboard";
+const pasteboardAppTools = new Map<string, Promise<string>>();
 
 export class PasteboardCopyTimeoutError extends Error {
   constructor() {
@@ -117,12 +119,40 @@ async function pasteboardChangeCount(udid: string): Promise<number> {
   return count;
 }
 
-async function pasteboardTextSnapshot(udid: string): Promise<string | null> {
-  const text = await simctlRaw(["pbpaste", udid], {
-    timeout: 3_000,
-    maxBuffer: MAX_PASTEBOARD_TEXT_BYTES,
-  }).catch(() => null);
-  return text || null;
+async function pasteboardAppTool(udid: string): Promise<string> {
+  const existing = pasteboardAppTools.get(udid);
+  if (existing) return existing;
+  const pending = (async () => {
+    const app = locateSimpbArtifact("ServeSimPasteboard.app") ??
+      buildSimpbArtifact("SimPasteboard", "ServeSimPasteboard.app");
+    await simctl(["install", udid, app]);
+    await simctl(["privacy", udid, "grant", "pasteboard", PASTEBOARD_APP_BUNDLE]);
+    return join(app, "serve-sim-pasteboard");
+  })();
+  pasteboardAppTools.set(udid, pending);
+  void pending.catch(() => {
+    if (pasteboardAppTools.get(udid) === pending) pasteboardAppTools.delete(udid);
+  });
+  return pending;
+}
+
+interface PasteboardSnapshot {
+  hasText: boolean;
+  archive: string;
+}
+
+async function snapshotPasteboard(udid: string, tool: string): Promise<PasteboardSnapshot> {
+  const output = await simctlRaw(["spawn", udid, tool, "--snapshot"], {
+    timeout: 8_000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  const newline = output.indexOf("\n");
+  const flag = output.slice(0, newline);
+  const archive = output.slice(newline + 1).trim();
+  if (newline < 0 || (flag !== "0" && flag !== "1") || !/^[A-Za-z0-9+/]+={0,2}$/.test(archive)) {
+    throw new Error("Invalid simulator pasteboard snapshot");
+  }
+  return { hasText: flag === "1", archive };
 }
 
 export async function waitForPasteboardChange(
@@ -148,22 +178,31 @@ export function copyFromSim(
   sendCopyShortcut: () => Promise<void>,
 ): Promise<PasteboardReadResult> {
   return withSimPasteboardLock(udid, async () => {
-    // Some apps skip a pasteboard write when copying the same text twice. Move the pasteboard
-    // away from its current text before the shortcut so a real Copy must replace it.
-    const previousText = await pasteboardTextSnapshot(udid);
-    const marker = previousText === null ? null : `serve-sim-copy-${randomUUID()}`;
-    if (marker !== null) await writeSimPasteboardUnlocked(udid, marker);
-    const before = await pasteboardChangeCount(udid);
+    const appTool = await pasteboardAppTool(udid);
+    const snapshot = await snapshotPasteboard(udid, appTool);
+    // Some apps skip a pasteboard write when copying the same text twice. Preserve every item
+    // before moving the pasteboard away from its current text, then restore on failure.
+    const marker = snapshot.hasText ? `serve-sim-copy-${randomUUID()}` : null;
+    let before: number | null = null;
     try {
+      if (marker !== null) await writeSimPasteboardUnlocked(udid, marker);
+      before = await pasteboardChangeCount(udid);
       await sendCopyShortcut();
       await waitForPasteboardChange(() => pasteboardChangeCount(udid), before);
-      const result = await readSimPasteboardResult(udid);
-      if (result.text === marker) throw new PasteboardCopyTimeoutError();
-      return result;
+      const text = await simctlRaw(["spawn", udid, appTool, "--read-text"], {
+        timeout: 8_000,
+        maxBuffer: MAX_PASTEBOARD_TEXT_BYTES,
+      });
+      if (text === marker) throw new PasteboardCopyTimeoutError();
+      return { text, relaunchedApp: null };
     } catch (error) {
-      // Keep the user's prior text if the app did not replace the temporary marker.
-      if (marker !== null && await pasteboardChangeCount(udid) === before) {
-        await writeSimPasteboardUnlocked(udid, previousText!);
+      // A failed Copy must not discard image, HTML, or other pasteboard representations.
+      const markerStillPresent = marker !== null && (before === null
+        ? await simctlRaw(["spawn", udid, appTool, "--read-text"]).then((text) => text === marker)
+        : await pasteboardChangeCount(udid).then((count) => count === before)
+            .catch(async () => await simctlRaw(["spawn", udid, appTool, "--read-text"]) === marker));
+      if (markerStillPresent) {
+        await runPasteboardToolWithInput(udid, appTool, ["--restore"], snapshot.archive);
       }
       throw error;
     }
@@ -172,8 +211,12 @@ export function copyFromSim(
 
 function writeSimPasteboardUnlocked(udid: string, text: string): Promise<void> {
   const tool = locatePasteboardTool() ?? buildPasteboardTool();
+  return runPasteboardToolWithInput(udid, tool, [], text);
+}
+
+function runPasteboardToolWithInput(udid: string, tool: string, args: string[], input: string): Promise<void> {
   return new Promise((resolveWrite, rejectWrite) => {
-    const child = spawn("xcrun", ["simctl", "spawn", udid, tool], {
+    const child = spawn("xcrun", ["simctl", "spawn", udid, tool, ...args], {
       stdio: ["pipe", "ignore", "pipe"],
     });
     let stderr = "";
@@ -201,7 +244,7 @@ function writeSimPasteboardUnlocked(udid: string, text: string): Promise<void> {
       pendingError = error;
       child.kill("SIGKILL");
     });
-    child.stdin.end(text, "utf-8");
+    child.stdin.end(input, "utf-8");
   });
 }
 
