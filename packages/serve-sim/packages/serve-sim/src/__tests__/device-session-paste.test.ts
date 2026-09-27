@@ -5,6 +5,7 @@ import { join } from "path";
 import { DeviceSession } from "../device-session";
 import { NativeHid } from "../native";
 import { HID_USAGE_BY_CODE } from "../client/utils/hid";
+import { PasteboardCopyTimeoutError, copyFromSim } from "../sim-pasteboard";
 import { withShimsAsync } from "./helpers";
 
 const ControlLeft = HID_USAGE_BY_CODE.ControlLeft!;
@@ -242,21 +243,24 @@ describe("copy shortcut", () => {
 
 describe("copyPasteboard", () => {
   // A one-slot simulator pasteboard behind a fake xcrun; pbpaste can be slowed down.
-  async function withPasteboard(text: string, pbpasteDelay: string, run: (udid: string, board: string, markCopy: (call: KeyCall) => void) => Promise<void>) {
+  async function withPasteboard(text: string, pbpasteDelay: string, run: (udid: string, board: string, markCopy: (call: KeyCall) => void, shortcutDone: Promise<void>) => Promise<void>) {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-copy-turn-test-"));
     const board = join(dir, "pasteboard");
     const changeCount = join(dir, "change-count");
     writeFileSync(board, text);
     writeFileSync(changeCount, "0");
     const xcrun = `#!/bin/sh\nif [ "$5" = --change-count ]; then cat '${changeCount}'; elif [ "$2" = pbpaste ]; then sleep ${pbpasteDelay}; cat '${board}'; else cat > '${board}'; count=$(cat '${changeCount}'); printf '%s' "$((count + 1))" > '${changeCount}'; fi\n`;
+    let resolveShortcut!: () => void;
+    const shortcutDone = new Promise<void>((resolve) => { resolveShortcut = resolve; });
     const markCopy = ([type, usage]: KeyCall) => {
       if (type === "up" && usage === KeyC) {
         writeFileSync(board, text);
         writeFileSync(changeCount, String(Number(readFileSync(changeCount, "utf8")) + 1));
+        resolveShortcut();
       }
     };
     try {
-      await withShimsAsync({ xcrun }, () => run(`COPY-TURN-TEST-${process.pid}-${Math.random()}`, board, markCopy));
+      await withShimsAsync({ xcrun }, () => run(`COPY-TURN-TEST-${process.pid}-${Math.random()}`, board, markCopy, shortcutDone));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -285,7 +289,7 @@ describe("copyPasteboard", () => {
   });
 
   test("keeps another viewer's copy behind the pasteboard read", async () => {
-    await withPasteboard("copied", "0.8", async (udid, board, markCopy) => {
+    await withPasteboard("copied", "0.8", async (udid, board, markCopy, shortcutDone) => {
       const { internals, viewer } = session(undefined, udid, markCopy);
       const b = viewer();
       let copyDone = false;
@@ -294,7 +298,8 @@ describe("copyPasteboard", () => {
         copyDone = true;
         return result;
       });
-      await Bun.sleep(300); // shortcut and settle are done; pbpaste runs for 0.8 s more
+      await shortcutDone;
+      await Bun.sleep(100); // the 0.8 s pasteboard read is still in progress
       const viewerCopy = internals.queueInputOperation(b, async () => {
         writeFileSync(board, "newer copy");
         viewerCopyDone = true;
@@ -314,6 +319,13 @@ describe("copyPasteboard", () => {
     await expect(internals.copyPasteboard()).rejects.toThrow("Simulator input is unavailable");
     expect(calls).toEqual([]);
   });
+
+  test("restores the prior text when Copy never updates the pasteboard", async () => {
+    await withPasteboard("previous text", "0", async (udid, board) => {
+      await expect(copyFromSim(udid, async () => {})).rejects.toBeInstanceOf(PasteboardCopyTimeoutError);
+      expect(readFileSync(board, "utf8")).toBe("previous text");
+    });
+  }, 10_000);
 
   test("sends nothing if the session stops while the copy waits", async () => {
     const { calls, internals, viewer } = session();
