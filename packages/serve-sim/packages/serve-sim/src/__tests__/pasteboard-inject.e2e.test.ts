@@ -163,6 +163,9 @@ describeWildcard(`clipboard read while switching apps (${udid ?? "<skipped>"})`,
       expect((await frontmostAppFromRecentLogs(udid!))?.bundleId).toBe(SAFARI_BUNDLE);
     } finally {
       session.unsubscribe();
+      terminatePasteboardApps(udid!);
+      clearLaunchState(udid!);
+      removeCapabilityLoaderSync(udid!);
     }
   }, 60_000);
 });
