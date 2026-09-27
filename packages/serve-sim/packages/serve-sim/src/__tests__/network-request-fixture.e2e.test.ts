@@ -319,12 +319,14 @@ describeOrSkip("network request fixture", () => {
       },
       response: { status: 200 },
     });
-    expect(upload?.request.postData?.text).toHaveLength(CAPTURED_BODY_BYTES);
+    // The fixture fills its upload with "x"; the preview is its first 512 KiB, byte for byte.
+    const preview = "x".repeat(CAPTURED_BODY_BYTES);
+    expect(upload?.request.postData?.text === preview).toBe(true);
     const capturedBody = await fetch(
       `http://127.0.0.1:${serverPort}/network-capture/${upload!._captureId}?device=${udid!}`,
       { headers },
     ).then((response) => response.json()) as { requestBody: string; requestTruncated: boolean };
-    expect(capturedBody.requestBody).toHaveLength(CAPTURED_BODY_BYTES);
+    expect(capturedBody.requestBody === preview).toBe(true);
     expect(capturedBody.requestTruncated).toBe(true);
 
     await waitForAsync(() => {
