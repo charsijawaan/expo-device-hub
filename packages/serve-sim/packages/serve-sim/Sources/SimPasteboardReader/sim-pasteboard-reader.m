@@ -16,18 +16,22 @@ static void answer(void) {
   const char *tmp = getenv("TMPDIR");
   if (tmp == NULL || tmp[0] == '\0') return;
 
-  char request[1024], value[1024], done[1024], pending[1024];
+  char request[1024], claimed[1024], value[1024], done[1024], pending[1024];
   snprintf(request, sizeof request, "%s/serve-sim-pasteboard.request", tmp);
+  snprintf(claimed, sizeof claimed, "%s/serve-sim-pasteboard.request.claimed", tmp);
   snprintf(value, sizeof value, "%s/serve-sim-pasteboard.txt", tmp);
   snprintf(done, sizeof done, "%s/serve-sim-pasteboard.txt.done", tmp);
   snprintf(pending, sizeof pending, "%s/serve-sim-pasteboard.txt.pending", tmp);
 
-  // The nonce identifies the request being answered; the host rejects any other.
-  FILE *file = fopen(request, "r");
+  // Claim the request before the main-queue read. A timed-out host may write a
+  // new request while that read is pending; the old answer must not unlink it.
+  if (rename(request, claimed) != 0) return;
+  FILE *file = fopen(claimed, "r");
   if (file == NULL) return;
   char nonce[128];
   size_t length = fread(nonce, 1, sizeof nonce - 1, file);
   fclose(file);
+  unlink(claimed);
   nonce[length] = '\0';
 
   __block NSString *text = nil;
@@ -41,8 +45,6 @@ static void answer(void) {
     fprintf(stderr, "[serve-sim] could not write the pasteboard answer to %s\n", value);
     return;
   }
-
-  unlink(request);
 
   // Rename so the host never reads a half-written done file.
   if (!write_whole_file(pending, nonce, length) || rename(pending, done) != 0) {

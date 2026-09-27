@@ -89,6 +89,32 @@ describe("requestInjectedPasteboard", () => {
     expect(await answered).toBe(true);
   });
 
+  test("an expired reader answer does not consume the next request", async () => {
+    const root = container();
+    const { request, value, done } = paths(root);
+    const claimed = `${request}.claimed`;
+    const first = requestInjectedPasteboard(root, 200);
+    for (let attempt = 0; attempt < 200 && !(await fs.stat(request).catch(() => null)); attempt++) {
+      await Bun.sleep(5);
+    }
+    await fs.rename(request, claimed);
+    const oldNonce = await fs.readFile(claimed, "utf-8");
+    await fs.rm(claimed);
+    expect(await first).toBeNull();
+
+    const second = requestInjectedPasteboard(root, 3000);
+    for (let attempt = 0; attempt < 200 && !(await fs.stat(request).catch(() => null)); attempt++) {
+      await Bun.sleep(5);
+    }
+    const newNonce = await fs.readFile(request, "utf-8");
+    expect(newNonce).not.toBe(oldNonce);
+    await fs.writeFile(value, "expired");
+    await fs.writeFile(done, oldNonce);
+    const answered = answerOnce(root, "fresh");
+    expect(await second).toBe("fresh");
+    expect(await answered).toBe(true);
+  });
+
   test("refuses a container that is not an absolute path", async () => {
     // `simctl get_app_container` exits 0 and prints "(null)" for an app with no
     // data container; joining that would write into the working directory.
