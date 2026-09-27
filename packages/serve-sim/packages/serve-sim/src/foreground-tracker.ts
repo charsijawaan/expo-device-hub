@@ -256,9 +256,9 @@ export const foregroundTracker = createForegroundTrackerCache();
 /** Recover the latest visible app when neither a live tracker nor AX can identify it. */
 export async function frontmostAppFromRecentLogs(udid: string): Promise<ForegroundApp | null> {
   const output = await simctlRaw([
-    "spawn", udid, "log", "show", "--last", "1h", "--style", "ndjson", "--predicate",
+    "spawn", udid, "log", "show", "--last", "boot", "--style", "ndjson", "--predicate",
     'process == "SpringBoard" AND eventMessage CONTAINS "Setting process visibility to:"',
-  ], { timeout: 15_000, maxBuffer: 2 * 1024 * 1024 }).catch(() => "");
+  ], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 }).catch(() => "");
   return parseRecentVisibilityLogs(output);
 }
 
@@ -271,7 +271,7 @@ export function parseRecentVisibilityLogs(output: string): ForegroundApp | null 
     } catch {
       continue;
     }
-    const match = /\[app<([^>]+)>:(\d+)\] Setting process visibility to: (Foreground|Background)/.exec(message);
+    const match = /\[app<([^>]+)>:(\d+)\] Setting process visibility to: (Foreground|Background|Unknown)/.exec(message);
     if (!match || !isUserFacingBundle(match[1]!)) continue;
     if (match[3] === "Foreground") {
       visible = { bundleId: match[1]!, pid: Number(match[2]) };
