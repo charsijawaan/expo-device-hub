@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "child_process";
-import { foregroundTracker } from "../foreground-tracker";
+import { existsSync } from "fs";
+import { join } from "path";
+import { foregroundTracker, frontmostAppFromRecentLogs } from "../foreground-tracker";
 import { clearLaunchState, removeCapabilityLoaderSync } from "../launch-manager";
 import { simctlSync } from "../simctl";
 import { readSimPasteboard } from "../sim-pasteboard";
@@ -15,6 +17,7 @@ import {
   mappedDylibCount,
   openAppForPasteboard,
   PASTEBOARD_TEST_APPS,
+  SAFARI_BUNDLE,
   pasteboardDylib,
   pasteboardFixture,
   pasteboardTool,
@@ -130,6 +133,37 @@ describeWildcard(`clipboard from an untracked app (${udid ?? "<skipped>"})`, () 
     const probe = "serve-sim-untracked-app-probe";
     writeTestPasteboard(udid!, probe);
     expect(await withSkipPbpaste(() => readSimPasteboard(udid!))).toBe(probe);
+  }, 60_000);
+});
+
+describeWildcard(`clipboard read while switching apps (${udid ?? "<skipped>"})`, () => {
+  afterAll(() => {
+    terminatePasteboardApps(udid!);
+    clearLaunchState(udid!);
+    removeCapabilityLoaderSync(udid!);
+  }, 60_000);
+
+  test("does not relaunch the old app over the new foreground app", async () => {
+    ensureFixtureInstalled(udid!);
+    clearLaunchState(udid!);
+    removeCapabilityLoaderSync(udid!);
+    const session = await launchTrackedApp(udid!, FIXTURE_BUNDLE);
+    try {
+      const pid = runningPid(udid!, FIXTURE_BUNDLE);
+      const container = simctlSync(["get_app_container", udid!, FIXTURE_BUNDLE, "data"]);
+      const request = join(container, "tmp", "serve-sim-pasteboard.request");
+      const reading = withSkipPbpaste(() => readSimPasteboard(udid!));
+      const deadline = Date.now() + 20_000;
+      while (!existsSync(request) && Date.now() < deadline) await Bun.sleep(25);
+      expect(existsSync(request)).toBe(true);
+      simctlSync(["launch", udid!, SAFARI_BUNDLE]);
+
+      await expect(reading).rejects.toThrow(/Open the app you copied from/);
+      expect(runningPid(udid!, FIXTURE_BUNDLE)).toBe(pid);
+      expect((await frontmostAppFromRecentLogs(udid!))?.bundleId).toBe(SAFARI_BUNDLE);
+    } finally {
+      session.unsubscribe();
+    }
   }, 60_000);
 });
 
