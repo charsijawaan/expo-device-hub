@@ -1500,7 +1500,7 @@ function AppWithConfig({
       const keyboardOpen = keyboardOpenRef.current;
       // Only new presses: a key held while the simulator had focus still has to be released there.
       if (type === "down" && (e.defaultPrevented || isActionTarget(e.target) ||
-        (isTypingTarget(e.target) && !keyboardOpen))) return;
+        (isTypingTarget(e.target) && (!keyboardOpen || e.target !== keyboardInputRef.current)))) return;
       if (simFocused && !keyboardOpen) {
         // Leave Command+digits to browser tab switching. Use physical codes so
         // Option+Shift's layout-specific characters do not affect pose lookup.
