@@ -250,7 +250,8 @@ describe("copyPasteboard", () => {
     writeFileSync(board, text);
     writeFileSync(changeCount, "0");
     const xcrun = `#!/bin/sh
-if [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
+if [ "$2" = get_app_container ]; then exit 1
+elif [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
 elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < '${board}'
 elif [ "$5" = --read-text ]; then sleep ${pbpasteDelay}; cat '${board}'
 elif [ "$5" = --restore ]; then base64 -D > '${board}'; count=$(cat '${changeCount}'); printf '%s' "$((count + 1))" > '${changeCount}'

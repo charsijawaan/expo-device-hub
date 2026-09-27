@@ -121,8 +121,10 @@ async function pasteboardChangeCount(udid: string): Promise<number> {
 async function pasteboardAppTool(udid: string): Promise<string> {
   const app = locateSimpbArtifact("ServeSimPasteboard.app") ??
     buildSimpbArtifact("SimPasteboard", "ServeSimPasteboard.app");
-  // A simulator can be erased without changing its UDID or restarting serve-sim.
-  await simctl(["install", udid, app]);
+  // Check the simulator rather than caching by UDID: an erase removes installed apps.
+  const installed = await simctl(["get_app_container", udid, PASTEBOARD_APP_BUNDLE, "app"])
+    .catch(() => null);
+  if (!installed || installed === "(null)") await simctl(["install", udid, app]);
   await simctl(["privacy", udid, "grant", "pasteboard", PASTEBOARD_APP_BUNDLE]);
   return join(app, "serve-sim-pasteboard");
 }
