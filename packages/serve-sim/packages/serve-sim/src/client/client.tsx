@@ -136,6 +136,29 @@ import {
 
 // Default CSS-pixel width of the fixed 1:1 Duo stage, independent of either screen.
 const DUO_STAGE_DEFAULT_WIDTH = 580;
+// A barrier waits behind every earlier input on the socket, which can include a long paste.
+const INPUT_BARRIER_TIMEOUT_MS = 150_000;
+
+type PendingInputBarrier = {
+  ws: WebSocket;
+  timeout: ReturnType<typeof setTimeout>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+};
+
+function rejectInputBarriers(
+  barriers: PendingInputBarrier[],
+  ws: WebSocket | null,
+  message: string,
+): PendingInputBarrier[] {
+  return barriers.filter((barrier) => {
+    if (barrier.ws !== ws) return true;
+    clearTimeout(barrier.timeout);
+    barrier.reject(new Error(message));
+    return false;
+  });
+}
+
 type PreviewConfig = NonNullable<Window["__SIM_PREVIEW__"]>;
 
 function isLogsShortcut(e: KeyboardEvent): boolean {
@@ -931,6 +954,7 @@ function AppWithConfig({
     resolve: (ok: boolean) => void;
     reject: (error: Error) => void;
   } | null>(null);
+  const pendingInputBarriersRef = useRef<PendingInputBarrier[]>([]);
   if (!hingeQueueRef.current) {
     hingeQueueRef.current = createAcknowledgedControlQueue<HingeControlCommand>({
       send: (request) => {
@@ -1021,6 +1045,16 @@ function AppWithConfig({
           } catch {}
           return;
         }
+        if (bytes[0] === 0x91) {
+          const barriers = pendingInputBarriersRef.current;
+          const index = barriers.findIndex((barrier) => barrier.ws === ws);
+          if (index === -1) return;
+          const [barrier] = barriers.splice(index, 1);
+          clearTimeout(barrier!.timeout);
+          if (bytes[1] === 1) barrier!.resolve();
+          else barrier!.reject(new Error("Simulator input failed. Reload the preview and retry."));
+          return;
+        }
         if (bytes[0] !== 0x82) return;
         try {
           const cfg = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as StreamConfig;
@@ -1040,6 +1074,11 @@ function AppWithConfig({
           pendingPasteRef.current = null;
           pending.reject(new Error("Simulator input disconnected during paste"));
         }
+        pendingInputBarriersRef.current = rejectInputBarriers(
+          pendingInputBarriersRef.current,
+          ws,
+          "Simulator input disconnected during copy",
+        );
         if (!stopped && event.code === 1013) showInputSocketError(event.reason || "The server is busy. Try again shortly.");
         if (wsRef.current === ws) wsRef.current = null;
         if (!stopped) {
@@ -1070,6 +1109,11 @@ function AppWithConfig({
         pendingPasteRef.current = null;
         pending.reject(new Error("Simulator input disconnected during paste"));
       }
+      pendingInputBarriersRef.current = rejectInputBarriers(
+        pendingInputBarriersRef.current,
+        currentWs,
+        "Simulator input disconnected during copy",
+      );
       if (wsRef.current === currentWs) wsRef.current = null;
       hingeQueueRef.current?.clear();
       currentWs?.close();
@@ -1338,6 +1382,46 @@ function AppWithConfig({
 
   const pasteChainRef = useRef<Promise<void>>(Promise.resolve());
 
+  /** Resolves once the server has run every input sent earlier on `ws`. */
+  const waitForInputBarrier = useCallback(
+    (ws: WebSocket | null): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        if (!ws || ws !== wsRef.current || ws.readyState !== WebSocket.OPEN) {
+          reject(new Error("Simulator input disconnected during copy"));
+          return;
+        }
+        const barrier: PendingInputBarrier = {
+          ws,
+          resolve,
+          reject,
+          timeout: setTimeout(() => {
+            pendingInputBarriersRef.current = pendingInputBarriersRef.current.filter((b) => b !== barrier);
+            reject(new Error("Simulator input did not finish in time"));
+          }, INPUT_BARRIER_TIMEOUT_MS),
+        };
+        pendingInputBarriersRef.current.push(barrier);
+        try {
+          ws.send(Uint8Array.of(0x11));
+        } catch {
+          clearTimeout(barrier.timeout);
+          pendingInputBarriersRef.current = pendingInputBarriersRef.current.filter((b) => b !== barrier);
+          reject(new Error("Simulator input disconnected during copy"));
+        }
+      }),
+    [],
+  );
+
+  // The server presses Command+C for a copy, so it must first run what this viewer already
+  // sent, such as a text selection. Keys the paced sender still holds go out first, then the
+  // barrier follows them on the socket. A closed socket fails here; nothing is queued to replay.
+  const waitForPriorInput = useCallback(async () => {
+    // Taken before the wait: a socket that reconnects meanwhile may have missed some keys, and
+    // the barrier's identity check then refuses the copy.
+    const ws = wsRef.current;
+    await keySender.idle();
+    await waitForInputBarrier(ws);
+  }, [keySender, waitForInputBarrier]);
+
   const sendTextToSim = useCallback(
     (text: string): Promise<boolean> => {
       const device = config.device;
@@ -1374,7 +1458,7 @@ function AppWithConfig({
     [config.device],
   );
 
-  const clipboard = useClipboardToast(sendTextToSim);
+  const clipboard = useClipboardToast(config.device, waitForPriorInput, sendTextToSim);
 
   const simContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2002,6 +2086,11 @@ function AppWithConfig({
               />
               <ActionMenu
                 items={[
+                  {
+                    label: "Copy from Simulator",
+                    description: "Simulator clipboard to this device",
+                    onSelect: () => void clipboard.copyFromSim(),
+                  },
                   {
                     label: "Paste from Device",
                     description: "This device's clipboard to the simulator",

@@ -100,12 +100,14 @@ export interface SimulatorClipboardRead {
 }
 
 /**
- * Read the simulator pasteboard through the authenticated HTTP endpoint.
+ * Read the simulator pasteboard. With `copy`, the server first presses Command+C and reads under
+ * the same lock, so another viewer's copy or paste cannot change the text in between.
  */
 export async function readSimClipboard(
   udid: string,
+  { copy = false }: { copy?: boolean } = {},
 ): Promise<SimulatorClipboardRead> {
-  const response = await fetch(pasteboardEndpoint(udid), {
+  const response = await fetch(`${pasteboardEndpoint(udid)}${copy ? "&copy=1" : ""}`, {
     method: "POST",
     headers: pasteboardHeaders(),
   });
@@ -124,8 +126,37 @@ export async function readSimClipboard(
   };
 }
 
+export function copyTextViaSelection(text: string): boolean {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+  document.body.appendChild(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+  try {
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
 export async function readTextFromBrowserClipboard(): Promise<string> {
   const clipboard = navigator.clipboard;
   if (!clipboard?.readText) throw new Error("Clipboard unavailable on this origin");
   return await clipboard.readText();
+}
+
+export async function writeTextToBrowserClipboard(text: string): Promise<void> {
+  const clipboard = navigator.clipboard;
+  if (!clipboard) throw new Error("Clipboard unavailable on this origin");
+
+  if (typeof ClipboardItem !== "undefined" && clipboard.write) {
+    const item = new ClipboardItem({ "text/plain": new Blob([text], { type: "text/plain" }) });
+    await clipboard.write([item]);
+    return;
+  }
+
+  if (!clipboard.writeText) throw new Error("Clipboard unavailable on this origin");
+  await clipboard.writeText(text);
 }

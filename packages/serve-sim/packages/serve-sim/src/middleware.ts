@@ -2526,7 +2526,22 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
           return;
         }
 
-        const result = await readSimPasteboardResult(udid);
+        // Copy presses Command+C in an input turn and reads under the pasteboard lock, so another
+        // viewer can't change the text in between. It needs the device's input session, which a
+        // viewer's socket keeps running.
+        const copy = new URLSearchParams(qIndex === -1 ? "" : rawUrl.slice(qIndex + 1)).get("copy") === "1";
+        const session = copy ? peekDeviceSession(udid) : undefined;
+        if (copy && !session) {
+          res.writeHead(409, {
+            ...PASTEBOARD_RESPONSE_HEADERS,
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ ok: false, error: "No simulator input session for this device" }));
+          return;
+        }
+        const result = session
+          ? await session.copyPasteboard()
+          : await readSimPasteboardResult(udid);
         res.writeHead(200, {
           ...PASTEBOARD_RESPONSE_HEADERS,
           "Content-Type": "application/json",

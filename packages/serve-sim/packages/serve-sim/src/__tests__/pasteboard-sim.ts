@@ -2,8 +2,7 @@ import { execFileSync } from "child_process";
 import { simctlSync } from "../simctl";
 import { existsSync } from "fs";
 import { join } from "path";
-import { HID_USAGE_BY_CODE } from "../client/utils/hid";
-import type { KeyEvent } from "../text-to-keys";
+import { simCopyHidEvents, simSelectAllHidEvents, type HidKeyEvent } from "../client/utils/sim-clipboard";
 import { foregroundTracker } from "../foreground-tracker";
 import {
   clearLaunchState,
@@ -268,18 +267,7 @@ export function nativeAddonExists(): boolean {
   return candidates.some((candidate) => existsSync(candidate));
 }
 
-function commandChord(code: "KeyC" | "KeyA"): KeyEvent[] {
-  const command = HID_USAGE_BY_CODE.MetaLeft!;
-  const key = HID_USAGE_BY_CODE[code]!;
-  return [
-    { type: "down", usage: command },
-    { type: "down", usage: key },
-    { type: "up", usage: key },
-    { type: "up", usage: command },
-  ];
-}
-
-async function sendHidEvents(udid: string, events: KeyEvent[]): Promise<void> {
+async function sendHidEvents(udid: string, events: HidKeyEvent[]): Promise<void> {
   const { NativeHid } = await import("../native");
   const hid = new NativeHid(udid);
   for (const ev of events) {
@@ -289,12 +277,12 @@ async function sendHidEvents(udid: string, events: KeyEvent[]): Promise<void> {
 }
 
 export async function sendSimCopyShortcut(udid: string): Promise<void> {
-  await sendHidEvents(udid, commandChord("KeyC"));
+  await sendHidEvents(udid, simCopyHidEvents(new Set()));
   await Bun.sleep(150);
 }
 
 export async function sendSimSelectAllShortcut(udid: string): Promise<void> {
-  await sendHidEvents(udid, commandChord("KeyA"));
+  await sendHidEvents(udid, simSelectAllHidEvents(new Set()));
   await Bun.sleep(150);
 }
 
