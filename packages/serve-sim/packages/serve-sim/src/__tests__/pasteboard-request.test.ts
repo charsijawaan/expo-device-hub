@@ -219,6 +219,10 @@ describe("writeSimPasteboard", () => {
     // A one-slot simulator pasteboard: pbpaste prints it, pbcopy replaces it.
     const xcrun = `#!/bin/sh
 if [ "$2" = pbpaste ]; then cat ${quoted}
+elif [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
+elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < ${quoted}
+elif [ "$5" = --read-text ]; then cat ${quoted}
+elif [ "$5" = --restore ]; then base64 -D > ${quoted}; count=$(cat ${quotedCount}); printf '%s' "$((count + 1))" > ${quotedCount}
 elif [ "$5" = --change-count ]; then cat ${quotedCount}
 else cat > ${quoted}; count=$(cat ${quotedCount} 2>/dev/null || printf 0); printf '%s' "$((count + 1))" > ${quotedCount}
 fi
@@ -251,6 +255,31 @@ fi
       });
     } finally {
       release();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("restores the prior text if the baseline change count cannot be read", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "serve-sim-copy-baseline-test-"));
+    const board = join(dir, "pasteboard");
+    writeFileSync(board, "previous text");
+    const xcrun = `#!/bin/sh
+if [ "$2" = install ] || [ "$2" = privacy ]; then exit 0
+elif [ "$5" = --snapshot ]; then printf '1\\n'; base64 < '${board}'
+elif [ "$5" = --read-text ]; then cat '${board}'
+elif [ "$5" = --restore ]; then base64 -D > '${board}'
+elif [ "$5" = --change-count ]; then exit 1
+else cat > '${board}'
+fi
+`;
+    try {
+      await withShimsAsync({ xcrun }, async () => {
+        await expect(copyFromSim(`COPY-BASELINE-TEST-${process.pid}`, async () => {
+          throw new Error("shortcut should not run");
+        })).rejects.toThrow();
+        expect(readFileSync(board, "utf8")).toBe("previous text");
+      });
+    } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });

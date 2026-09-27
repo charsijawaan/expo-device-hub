@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "child_process";
+import { join } from "path";
 import { simMiddleware } from "../middleware";
 import { closeDeviceSession, getDeviceSession } from "../device-session";
+import { PasteboardCopyTimeoutError, copyFromSim as performCopyFromSim, locateSimpbArtifact } from "../sim-pasteboard";
 import {
   COPY_FIXTURE_TEXT,
   ensureFixtureInstalled,
@@ -100,7 +102,29 @@ describeCopy(`toolbar Copy (booted sim ${udid ?? "<skipped>"})`, () => {
       expect(second.text).toBe(first.text);
     }, 45_000);
 
-    test("Copy reads Safari through the injected fallback", async () => {
+    test("failed Copy restores Safari's rich pasteboard items", async () => {
+      await sendSimSelectAllShortcut(udid!);
+      expect((await copyFromSim(false)).status).toBe(200);
+      const app = locateSimpbArtifact("ServeSimPasteboard.app");
+      expect(app).not.toBeNull();
+      const tool = join(app!, "serve-sim-pasteboard");
+      const items = () => {
+        const snapshot = execFileSync("xcrun", ["simctl", "spawn", udid!, tool, "--snapshot"], {
+          encoding: "utf8",
+        });
+        return execFileSync("plutil", ["-p", "-"], {
+          input: Buffer.from(snapshot.split("\n")[1]!, "base64"),
+          encoding: "utf8",
+        });
+      };
+      const before = items();
+      expect(before).toContain("public.html");
+      expect(before).toContain("public.utf8-plain-text");
+      await expect(performCopyFromSim(udid!, async () => {})).rejects.toBeInstanceOf(PasteboardCopyTimeoutError);
+      expect(items()).toBe(before);
+    }, 45_000);
+
+    test("Copy reads Safari without simctl pbpaste", async () => {
       await sendSimSelectAllShortcut(udid!);
       const body = await copyFromSim();
       expect(body.status).toBe(200);
