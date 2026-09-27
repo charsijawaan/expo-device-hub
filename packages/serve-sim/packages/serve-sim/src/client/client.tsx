@@ -86,8 +86,7 @@ import { openHostEventStream, runHostAction } from "./utils/exec";
 import { hidUsageForCode } from "./utils/hid";
 import { keydownForward, shiftedCharacter } from "./utils/mobile-keyboard";
 import {
-  pasteRequestFits,
-  SIM_PASTE_MESSAGE_TAG,
+  encodePasteRequest,
 } from "./utils/sim-clipboard";
 import { useClipboardToast } from "./hooks/use-clipboard-toast";
 import { ActionMenu } from "./components/action-menu";
@@ -123,6 +122,7 @@ import {
 import {
   flushWsMessageQueue,
   sendOrQueueWsMessage,
+  trySendEncodedWsMessage,
   trySendWsMessage,
   type QueuedWsMessage,
 } from "./utils/ws-send-queue";
@@ -1353,7 +1353,8 @@ function AppWithConfig({
           return;
         }
         const requestId = ++pasteRequestIdRef.current;
-        if (!pasteRequestFits(requestId, text)) {
+        const message = encodePasteRequest(requestId, text);
+        if (!message) {
           reject(new Error("This text is too large to paste into the simulator"));
           return;
         }
@@ -1363,7 +1364,7 @@ function AppWithConfig({
           reject(new Error("Simulator paste timed out"));
         }, 150_000);
         pendingPasteRef.current = { requestId, ws, timeout, resolve, reject };
-        if (!trySendWsMessage(ws, SIM_PASTE_MESSAGE_TAG, { requestId, text })) {
+        if (!trySendEncodedWsMessage(ws, message)) {
           clearTimeout(timeout);
           pendingPasteRef.current = null;
           reject(new Error("Simulator input disconnected during paste"));

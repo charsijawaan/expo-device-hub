@@ -53,8 +53,13 @@ export const SIM_PASTE_MESSAGE_TAG = 0x12;
  * larger frame instead of answering, and JSON escaping can make the frame several times the
  * size of the text, so measure the encoded request rather than the text.
  */
+export function encodePasteRequest(requestId: number, text: string): Uint8Array<ArrayBuffer> | null {
+  const message = encodeWsMessage(SIM_PASTE_MESSAGE_TAG, { requestId, text });
+  return message.byteLength <= EXEC_WS_MAX_MESSAGE_BYTES ? message : null;
+}
+
 export function pasteRequestFits(requestId: number, text: string): boolean {
-  return encodeWsMessage(SIM_PASTE_MESSAGE_TAG, { requestId, text }).byteLength <= EXEC_WS_MAX_MESSAGE_BYTES;
+  return encodePasteRequest(requestId, text) !== null;
 }
 
 export function simPasteHidEvents(pressed: ReadonlySet<number>): KeyEvent[] {
