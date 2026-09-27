@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { toast as sonnerToast } from "sonner";
 import { ClipboardToastContent } from "../components/app-toasts";
+import { createLatestClipboardWriter } from "../utils/latest-clipboard-write";
 import {
   copyTextViaSelection,
   readSimClipboard,
@@ -47,12 +48,21 @@ export function useClipboardToast(
   sendTextToSim: (text: string) => Promise<boolean>,
 ) {
   const pasteGeneration = useRef(0);
+  const currentDevice = useRef(deviceUdid);
+  currentDevice.current = deviceUdid;
+  const copyWriter = useRef<ReturnType<typeof createLatestClipboardWriter> | null>(null);
+  copyWriter.current ??= createLatestClipboardWriter(writeTextToBrowserClipboard);
   const copyFromSim = useCallback(async () => {
+    const writer = copyWriter.current!;
+    const generation = writer.begin();
+    const isCurrent = () => writer.isCurrent(generation) && currentDevice.current === deviceUdid;
     sonnerToast.dismiss(MANUAL_TOAST_ID);
     renderToast("pending", "Reading simulator clipboard…", COPY_TOAST_ID);
     try {
       await waitForPriorInput();
+      if (!isCurrent()) return;
       const { text, relaunchedApp } = await readSimClipboard(deviceUdid, { copy: true });
+      if (!isCurrent()) return;
       const copiedMessage = relaunchedApp
         ? `Copied after relaunching ${relaunchedApp} to enable clipboard access`
         : "Copied from simulator";
@@ -62,18 +72,22 @@ export function useClipboardToast(
           : "Simulator clipboard is empty";
         // Clear the browser clipboard too, or the next paste would insert older text.
         try {
-          await writeTextToBrowserClipboard("");
+          if (!(await writer.write(generation, "", isCurrent))) return;
+          if (!isCurrent()) return;
           renderToast("copied", emptyMessage, COPY_TOAST_ID);
         } catch {
+          if (!isCurrent()) return;
           renderToast("error", `${emptyMessage}. The browser clipboard still has older text`, COPY_TOAST_ID);
         }
         return;
       }
 
       try {
-        await writeTextToBrowserClipboard(text);
+        if (!(await writer.write(generation, text, isCurrent))) return;
+        if (!isCurrent()) return;
         renderToast("copied", copiedMessage, COPY_TOAST_ID);
       } catch {
+        if (!isCurrent()) return;
         sonnerToast.dismiss(COPY_TOAST_ID);
         renderToast(
           "manual",
@@ -83,6 +97,7 @@ export function useClipboardToast(
           MANUAL_TOAST_ID,
           {
             onCopy: () => {
+              if (!isCurrent()) return;
               const copied = copyTextViaSelection(text);
               renderToast(
                 copied ? "copied" : "error",
@@ -94,6 +109,7 @@ export function useClipboardToast(
         );
       }
     } catch (error) {
+      if (!isCurrent()) return;
       renderToast(
         "error",
         error instanceof Error ? error.message : "Copy failed",

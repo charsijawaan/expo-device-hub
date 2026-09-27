@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "child_process";
 import { simMiddleware } from "../middleware";
+import { closeDeviceSession, getDeviceSession } from "../device-session";
 import {
   COPY_FIXTURE_TEXT,
   ensureFixtureInstalled,
@@ -11,7 +12,6 @@ import {
   pasteboardDylib,
   pasteboardFixture,
   SAFARI_BUNDLE,
-  sendSimCopyShortcut,
   sendSimSelectAllShortcut,
   withSkipPbpaste,
 } from "./pasteboard-sim";
@@ -24,15 +24,16 @@ afterAll(() => stateDir.restore());
 const TEST_TOKEN = "test-token";
 const middleware = simMiddleware({ basePath: "/preview", execToken: TEST_TOKEN });
 const udid = firstBootedIosSim();
-const copyReady = !!(udid && pasteboardDylib && pasteboardFixture && nativeAddonExists());
+const copyReady = !!(udid && pasteboardDylib && nativeAddonExists());
 requireE2E("pasteboard copy E2E", copyReady);
 const describeCopy = copyReady ? describe : describe.skip;
+const describeUserApp = copyReady && pasteboardFixture ? describe : describe.skip;
 const SAFARI_COPY_TEXT = "serve-sim-safari-copy-probe";
 
 async function postPasteboard(): Promise<{ ok?: boolean; text?: string; error?: string; status: number }> {
   const res = await middleware(
     new Request(
-      `http://localhost:3200/preview/api/pasteboard?device=${encodeURIComponent(udid!)}`,
+      `http://localhost:3200/preview/api/pasteboard?device=${encodeURIComponent(udid!)}&copy=1`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${TEST_TOKEN}`, Origin: "http://localhost:3200" },
@@ -44,7 +45,7 @@ async function postPasteboard(): Promise<{ ok?: boolean; text?: string; error?: 
 }
 
 async function copyFromSim(): Promise<{ ok?: boolean; text?: string; error?: string; status: number }> {
-  await sendSimCopyShortcut(udid!);
+  getDeviceSession(udid!);
   return withSkipPbpaste(() => postPasteboard());
 }
 
@@ -79,6 +80,7 @@ describeCopy(`toolbar Copy (booted sim ${udid ?? "<skipped>"})`, () => {
     }, 60_000);
 
     afterAll(() => {
+      closeDeviceSession(udid!);
       session?.unsubscribe();
       server?.stop(true);
     });
@@ -92,7 +94,7 @@ describeCopy(`toolbar Copy (booted sim ${udid ?? "<skipped>"})`, () => {
     }, 45_000);
   });
 
-  describe("user app", () => {
+  describeUserApp("user app", () => {
     let session: { unsubscribe: () => void } | undefined;
 
     beforeAll(async () => {
@@ -102,6 +104,7 @@ describeCopy(`toolbar Copy (booted sim ${udid ?? "<skipped>"})`, () => {
     }, 60_000);
 
     afterAll(() => {
+      closeDeviceSession(udid!);
       session?.unsubscribe();
     });
 
