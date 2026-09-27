@@ -44,9 +44,9 @@ async function postPasteboard(): Promise<{ ok?: boolean; text?: string; error?: 
   return { ...body, status: res!.status };
 }
 
-async function copyFromSim(): Promise<{ ok?: boolean; text?: string; error?: string; status: number }> {
+async function copyFromSim(skipPbpaste = true): Promise<{ ok?: boolean; text?: string; error?: string; status: number }> {
   getDeviceSession(udid!);
-  return withSkipPbpaste(() => postPasteboard());
+  return skipPbpaste ? withSkipPbpaste(() => postPasteboard()) : postPasteboard();
 }
 
 describeCopy(`toolbar Copy (booted sim ${udid ?? "<skipped>"})`, () => {
@@ -85,7 +85,21 @@ describeCopy(`toolbar Copy (booted sim ${udid ?? "<skipped>"})`, () => {
       server?.stop(true);
     });
 
-    test("select all, Copy, POST /api/pasteboard returns the page text", async () => {
+    test("repeated Copy of the same selection returns the same text both times", async () => {
+      await sendSimSelectAllShortcut(udid!);
+      const first = await copyFromSim(false);
+      expect(first.status).toBe(200);
+      expect(first.ok).toBe(true);
+      expect(first.text).toContain(SAFARI_COPY_TEXT);
+
+      await sendSimSelectAllShortcut(udid!);
+      const second = await copyFromSim(false);
+      expect(second.status).toBe(200);
+      expect(second.ok).toBe(true);
+      expect(second.text).toBe(first.text);
+    }, 45_000);
+
+    test("Copy reads Safari through the injected fallback", async () => {
       await sendSimSelectAllShortcut(udid!);
       const body = await copyFromSim();
       expect(body.status).toBe(200);
