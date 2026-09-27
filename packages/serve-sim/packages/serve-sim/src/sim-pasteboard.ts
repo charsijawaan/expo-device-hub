@@ -102,7 +102,6 @@ export function pasteTextIntoSim(
 const COPY_CHANGE_TIMEOUT_MS = 5_000;
 const COPY_CHANGE_POLL_MS = 75;
 const PASTEBOARD_APP_BUNDLE = "com.expo.serve-sim-pasteboard";
-const pasteboardAppTools = new Map<string, Promise<string>>();
 
 export class PasteboardCopyTimeoutError extends Error {
   constructor() {
@@ -120,20 +119,12 @@ async function pasteboardChangeCount(udid: string): Promise<number> {
 }
 
 async function pasteboardAppTool(udid: string): Promise<string> {
-  const existing = pasteboardAppTools.get(udid);
-  if (existing) return existing;
-  const pending = (async () => {
-    const app = locateSimpbArtifact("ServeSimPasteboard.app") ??
-      buildSimpbArtifact("SimPasteboard", "ServeSimPasteboard.app");
-    await simctl(["install", udid, app]);
-    await simctl(["privacy", udid, "grant", "pasteboard", PASTEBOARD_APP_BUNDLE]);
-    return join(app, "serve-sim-pasteboard");
-  })();
-  pasteboardAppTools.set(udid, pending);
-  void pending.catch(() => {
-    if (pasteboardAppTools.get(udid) === pending) pasteboardAppTools.delete(udid);
-  });
-  return pending;
+  const app = locateSimpbArtifact("ServeSimPasteboard.app") ??
+    buildSimpbArtifact("SimPasteboard", "ServeSimPasteboard.app");
+  // A simulator can be erased without changing its UDID or restarting serve-sim.
+  await simctl(["install", udid, app]);
+  await simctl(["privacy", udid, "grant", "pasteboard", PASTEBOARD_APP_BUNDLE]);
+  return join(app, "serve-sim-pasteboard");
 }
 
 interface PasteboardSnapshot {
