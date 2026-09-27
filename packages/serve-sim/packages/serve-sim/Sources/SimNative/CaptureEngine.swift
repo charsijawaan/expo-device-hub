@@ -479,7 +479,7 @@ actor CaptureEngine {
             await stopNativeFrameDelivery()
             recordingFinalizing = false
             recordingFinishTask = nil
-            print("[recording] encoder=\(result.encoderID) encoded=\(result.encodedFrames) written=\(result.writtenFrames) repeated=\(result.repeatedFrames) dropped=\(result.droppedTicks) coalesced=\(result.coalescedDrops) sourceUnavailable=\(result.sourceUnavailableTicks) transferPool=\(result.transferPoolDrops) inFlight=\(result.inFlightDrops) writer=\(result.writerDrops) backpressure=\(result.writerBackpressureTicks) encodeFailures=\(result.encodeFailures) maxInFlight=\(result.maxInFlight) meanEncodeMs=\(result.meanEncodeMs) maxEncodeMs=\(result.maxEncodeMs)")
+            print("[recording] encoder=\(result.encoderID) encoded=\(result.encodedFrames) written=\(result.writtenFrames) repeated=\(result.repeatedFrames) dropped=\(result.droppedTicks) coalesced=\(result.coalescedDrops) sourceUnavailable=\(result.sourceUnavailableTicks) transferPool=\(result.transferPoolDrops) inFlight=\(result.inFlightDrops) writer=\(result.writerDrops) backpressure=\(result.writerBackpressureTicks) encodeFailures=\(result.encodeFailures) maxInFlight=\(result.maxInFlight) meanEncodeMs=\(result.meanEncodeMs) maxEncodeMs=\(result.maxEncodeMs) ticks=\(result.ticks) meanTickLateMs=\(result.meanTickLateMs) maxTickLateMs=\(result.maxTickLateMs) transfers=\(result.transfers) meanTransferMs=\(result.meanTransferMs) maxTransferMs=\(result.maxTransferMs) meanSubmitMs=\(result.meanSubmitMs) maxSubmitMs=\(result.maxSubmitMs)")
             return result.manifestPath
         } catch {
             self.recording = nil

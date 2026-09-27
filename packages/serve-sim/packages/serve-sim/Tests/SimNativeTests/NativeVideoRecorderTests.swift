@@ -82,6 +82,15 @@ final class NativeVideoRecorderTests: XCTestCase {
         XCTAssertGreaterThan(result.meanEncodeMs, 0)
         XCTAssertGreaterThanOrEqual(result.maxEncodeMs, result.meanEncodeMs)
         XCTAssertFalse(result.encoderID.isEmpty)
+        // One owned 120×240 frame on a 322×242 canvas: exactly one transfer, then repeats.
+        XCTAssertEqual(result.transfers, 1)
+        XCTAssertGreaterThan(result.meanTransferMs, 0)
+        XCTAssertGreaterThanOrEqual(result.maxTransferMs, result.meanTransferMs)
+        XCTAssertGreaterThan(result.ticks, 20)
+        XCTAssertGreaterThanOrEqual(result.maxTickLateMs, result.meanTickLateMs)
+        XCTAssertLessThan(result.meanTickLateMs, 16.7)
+        XCTAssertGreaterThan(result.meanSubmitMs, 0)
+        XCTAssertGreaterThanOrEqual(result.maxSubmitMs, result.meanSubmitMs)
 
         let manifest = try JSONDecoder().decode(
             RecordingManifest.self,

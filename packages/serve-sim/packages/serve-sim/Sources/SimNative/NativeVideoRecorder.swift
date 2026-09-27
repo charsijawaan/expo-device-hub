@@ -22,6 +22,17 @@ struct NativeRecordingResult: Sendable {
     let maxInFlight: Int
     let meanEncodeMs: Double
     let maxEncodeMs: Double
+    /// Timer ticks that ran, and how late each fired after its 60 Hz slot.
+    let ticks: UInt64
+    let meanTickLateMs: Double
+    let maxTickLateMs: Double
+    /// Pixel transfers of a new source frame onto the recording canvas.
+    let transfers: UInt64
+    let meanTransferMs: Double
+    let maxTransferMs: Double
+    /// Time the encode call itself held the recording queue.
+    let meanSubmitMs: Double
+    let maxSubmitMs: Double
 }
 
 private final class RecordingFinishLatch: @unchecked Sendable {
@@ -86,6 +97,15 @@ final class NativeVideoRecorder: @unchecked Sendable {
     private var encodeTimeSumNs: UInt64 = 0
     private var encodeTimeMaxNs: UInt64 = 0
     private var encodeCompletions: UInt64 = 0
+    private var ticks: UInt64 = 0
+    private var tickLateSumNs: UInt64 = 0
+    private var tickLateMaxNs: UInt64 = 0
+    private var transfers: UInt64 = 0
+    private var transferSumNs: UInt64 = 0
+    private var transferMaxNs: UInt64 = 0
+    private var submits: UInt64 = 0
+    private var submitSumNs: UInt64 = 0
+    private var submitMaxNs: UInt64 = 0
 
     init(mailbox: NativeFrameMailbox, canvas: Dimensions, outputDirectory: String,
          bitrate: Int = 30_000_000) throws {
@@ -187,6 +207,12 @@ final class NativeVideoRecorder: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         let currentIndex = Int64((now - startNanoseconds) / 16_666_667)
         guard currentIndex > lastTick else { return }
+        // Lateness against the slot this tick lands in. A tick that arrives a
+        // whole slot late also counts a coalesced drop below.
+        let lateNs = (now - startNanoseconds) - UInt64(currentIndex) * 16_666_667
+        ticks &+= 1
+        tickLateSumNs &+= lateNs
+        tickLateMaxNs = max(tickLateMaxNs, lateNs)
         if currentIndex > lastTick + 1 {
             let missed = UInt64(currentIndex - lastTick - 1)
             droppedTicks &+= missed
@@ -220,8 +246,13 @@ final class NativeVideoRecorder: @unchecked Sendable {
                 buffer = frame.pixelBuffer
             } else {
                 let priorDrops = letterboxer.poolDrops
+                let transferStartNs = DispatchTime.now().uptimeNanoseconds
                 buffer = letterboxer.place(frame.pixelBuffer,
                                             width: canvas.width, height: canvas.height)
+                let transferNs = DispatchTime.now().uptimeNanoseconds - transferStartNs
+                transfers &+= 1
+                transferSumNs &+= transferNs
+                transferMaxNs = max(transferMaxNs, transferNs)
                 if buffer == nil, letterboxer.poolDrops == priorDrops {
                     failure = Self.error(7, "Hardware pixel transfer for recording failed")
                     timer?.cancel()
@@ -261,11 +292,18 @@ final class NativeVideoRecorder: @unchecked Sendable {
                               status: result, sample: sample, encodeElapsedNs: elapsedNs)
             }
         }
+        let submitNs = DispatchTime.now().uptimeNanoseconds - encodeStartNs
+        submits &+= 1
+        submitSumNs &+= submitNs
+        submitMaxNs = max(submitMaxNs, submitNs)
         if status != noErr {
             complete(index: index, pts: pts, wallClock: wallClock,
-                     status: status, sample: nil,
-                     encodeElapsedNs: DispatchTime.now().uptimeNanoseconds - encodeStartNs)
+                     status: status, sample: nil, encodeElapsedNs: submitNs)
         }
+    }
+
+    private static func meanMs(_ sumNs: UInt64, _ count: UInt64) -> Double {
+        count == 0 ? 0 : Double(sumNs) / Double(count) / 1_000_000
     }
 
     private func complete(index: Int64, pts: CMTime, wallClock: Date,
@@ -451,9 +489,16 @@ final class NativeVideoRecorder: @unchecked Sendable {
                 writerDrops: writerDrops,
                 writerBackpressureTicks: writerBackpressureTicks,
                 encodeFailures: encodeFailures, maxInFlight: maxInFlight,
-                meanEncodeMs: encodeCompletions == 0 ? 0
-                    : Double(encodeTimeSumNs) / Double(encodeCompletions) / 1_000_000,
-                maxEncodeMs: Double(encodeTimeMaxNs) / 1_000_000
+                meanEncodeMs: Self.meanMs(encodeTimeSumNs, encodeCompletions),
+                maxEncodeMs: Double(encodeTimeMaxNs) / 1_000_000,
+                ticks: ticks,
+                meanTickLateMs: Self.meanMs(tickLateSumNs, ticks),
+                maxTickLateMs: Double(tickLateMaxNs) / 1_000_000,
+                transfers: transfers,
+                meanTransferMs: Self.meanMs(transferSumNs, transfers),
+                maxTransferMs: Double(transferMaxNs) / 1_000_000,
+                meanSubmitMs: Self.meanMs(submitSumNs, submits),
+                maxSubmitMs: Double(submitMaxNs) / 1_000_000
             )))
         } catch {
             latch.resolve(.failure(error))
