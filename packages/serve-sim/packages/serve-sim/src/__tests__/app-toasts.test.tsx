@@ -104,6 +104,7 @@ describe("ClipboardToastContent", () => {
       />,
     );
     expect(html).toContain('aria-label="Text to paste into the simulator"');
+    expect(html).toContain('data-suspend-keyboard-capture="true"');
     // An input would strip the line breaks of pasted text.
     expect(html).toContain("<textarea");
     expect(html).not.toContain("<input");

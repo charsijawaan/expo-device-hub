@@ -125,6 +125,7 @@ function PasteField({ onSubmit }: { onSubmit: (text: string) => void }) {
       {/* A textarea keeps pasted line breaks; an input would strip them. */}
       <textarea
         autoFocus
+        data-suspend-keyboard-capture
         rows={2}
         value={text}
         onChange={(event) => setText(event.target.value)}
