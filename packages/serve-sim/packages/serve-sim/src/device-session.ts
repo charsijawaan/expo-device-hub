@@ -1282,16 +1282,17 @@ export class DeviceSession {
       for (const event of events(pressedAtSimulator)) {
         if (event.type === "up") await new Promise((resolve) => setTimeout(resolve, 30));
         if (!shortcutKeyReleased && this.hid.inputUnavailable) throw new Error("Simulator input is unavailable");
+        const key = shortcutKeyReleased ? this.hid.key.bind(this.hid) : this.hid.keyChecked.bind(this.hid);
         if (isLiftedModifier(event.usage)) {
-          await this.hid.keyChecked(event.type, event.usage);
+          await key(event.type, event.usage);
           if (event.type === "up") liftedModifiers.add(event.usage);
           else liftedModifiers.delete(event.usage);
         } else if (!ws || (shortcutKeyHeld && event.usage === shortcutKey)) {
-          await this.hid.keyChecked(event.type, event.usage);
+          await key(event.type, event.usage);
           if (!ws && event.type === "down") unownedKeysDown.add(event.usage);
           else unownedKeysDown.delete(event.usage);
         } else {
-          await this.updateHidKey(ws, event.type, event.usage, true);
+          await this.updateHidKey(ws, event.type, event.usage, !shortcutKeyReleased);
           if (event.type === "down") ownedKeysDown.add(event.usage);
           else ownedKeysDown.delete(event.usage);
         }
