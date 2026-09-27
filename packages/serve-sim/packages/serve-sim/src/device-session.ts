@@ -1304,20 +1304,20 @@ export class DeviceSession {
     const ownedKeysDown = new Set<number>();
     let shortcutKeyReleased = false;
     try {
-      if (shortcutKeyHeld) await this.hid.key("up", shortcutKey);
+      if (shortcutKeyHeld) await this.hid.keyChecked("up", shortcutKey);
       for (const event of events(pressedAtSimulator)) {
         if (event.type === "up") await new Promise((resolve) => setTimeout(resolve, 30));
         if (!shortcutKeyReleased && this.hid.inputUnavailable) throw new Error("Simulator input is unavailable");
         if (isLiftedModifier(event.usage)) {
-          await this.hid.key(event.type, event.usage);
+          await this.hid.keyChecked(event.type, event.usage);
           if (event.type === "up") liftedModifiers.add(event.usage);
           else liftedModifiers.delete(event.usage);
         } else if (!ws || (shortcutKeyHeld && event.usage === shortcutKey)) {
-          await this.hid.key(event.type, event.usage);
+          await this.hid.keyChecked(event.type, event.usage);
           if (!ws && event.type === "down") unownedKeysDown.add(event.usage);
           else unownedKeysDown.delete(event.usage);
         } else {
-          await this.updateHidKey(ws, event.type, event.usage);
+          await this.updateHidKey(ws, event.type, event.usage, true);
           if (event.type === "down") ownedKeysDown.add(event.usage);
           else ownedKeysDown.delete(event.usage);
         }
@@ -1325,33 +1325,35 @@ export class DeviceSession {
       }
     } finally {
       // A failed chord must not leave its own keys down or another viewer's modifier up.
-      for (const usage of unownedKeysDown) await this.hid.key("up", usage).catch(() => {});
-      if (ws) for (const usage of ownedKeysDown) await this.updateHidKey(ws, "up", usage).catch(() => {});
-      for (const usage of liftedModifiers) await this.hid.key("down", usage).catch(() => {});
+      for (const usage of unownedKeysDown) await this.hid.keyChecked("up", usage).catch(() => {});
+      if (ws) for (const usage of ownedKeysDown) await this.updateHidKey(ws, "up", usage, true).catch(() => {});
+      for (const usage of liftedModifiers) await this.hid.keyChecked("down", usage).catch(() => {});
     }
   }
 
-  private async updateHidKey(ws: HidSocket, type: "down" | "up", usage: number): Promise<void> {
+  private async updateHidKey(ws: HidSocket, type: "down" | "up", usage: number, checked = false): Promise<void> {
     const socketUsages = this.activeHidKeyUsages.get(ws);
     if (!socketUsages) return;
+    const key = (phase: "down" | "up") => checked ? this.hid.keyChecked(phase, usage) : this.hid.key(phase, usage);
     const owners = this.activeHidKeyUsageCounts.get(usage) ?? 0;
     if (type === "down") {
       if (socketUsages.has(usage)) {
-        await this.hid.key("down", usage);
+        await key("down");
         return;
       }
-      if (owners === 0) await this.hid.key("down", usage);
+      if (owners === 0) await key("down");
       socketUsages.add(usage);
       this.activeHidKeyUsageCounts.set(usage, owners + 1);
       return;
     }
-    if (!socketUsages.delete(usage)) return;
+    if (!socketUsages.has(usage)) return;
     if (owners <= 1) {
+      await key("up");
       this.activeHidKeyUsageCounts.delete(usage);
-      await this.hid.key("up", usage);
     } else {
       this.activeHidKeyUsageCounts.set(usage, owners - 1);
     }
+    socketUsages.delete(usage);
   }
 
   private queueInputOperation(ws: HidSocket, run: () => Promise<void>): Promise<void> | null {

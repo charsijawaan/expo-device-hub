@@ -103,9 +103,9 @@ export function useClipboardToast(
     }
   }, [deviceUdid, waitForPriorInput]);
 
-  const pasteText = useCallback(
-    async (text: string) => {
-      const generation = ++pasteGeneration.current;
+  const pasteTextForGeneration = useCallback(
+    async (text: string, generation: number) => {
+      if (generation !== pasteGeneration.current) return;
       renderToast("pending", "Pasting into the simulator…", PASTE_TOAST_ID);
       try {
         const ok = await sendTextToSim(text);
@@ -137,23 +137,30 @@ export function useClipboardToast(
     return () => clearTimeout(timer);
   }, []);
 
+  const pasteText = useCallback((text: string) => {
+    return pasteTextForGeneration(text, ++pasteGeneration.current);
+  }, [pasteTextForGeneration]);
+
   const pasteFromDevice = useCallback(async () => {
+    const generation = ++pasteGeneration.current;
     let text: string;
     try {
       text = await readTextFromBrowserClipboard();
     } catch {
+      if (generation !== pasteGeneration.current) return;
       if (framePolicyBlocks("clipboard-read")) requestFramePermission("clipboard-read");
       renderToast("paste", "Paste here to send it to the simulator", PASTE_TOAST_ID, {
         onPaste: (pasted) => void pasteText(pasted),
       });
       return;
     }
+    if (generation !== pasteGeneration.current) return;
     if (!text) {
       renderToast("copied", "Device clipboard is empty", PASTE_TOAST_ID);
       return;
     }
-    await pasteText(text);
-  }, [pasteText]);
+    await pasteTextForGeneration(text, generation);
+  }, [pasteText, pasteTextForGeneration]);
 
   return useMemo(
     () => ({ copyFromSim, pasteFromDevice, pasteText }),
