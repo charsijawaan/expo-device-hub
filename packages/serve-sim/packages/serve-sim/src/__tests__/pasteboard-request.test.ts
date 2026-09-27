@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, promises as fs, readFileSync, readdirSync, rmSync } from "fs";
+import { mkdtempSync, promises as fs, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { clipboardCapability, copyFromSim, pasteboardTarget, pasteTextIntoSim, requestInjectedPasteboard, writeSimPasteboard } from "../sim-pasteboard";
+import { PasteboardCopyTimeoutError, clipboardCapability, copyFromSim, pasteboardTarget, pasteTextIntoSim, requestInjectedPasteboard, waitForPasteboardChange, writeSimPasteboard } from "../sim-pasteboard";
 import { withShimsAsync } from "./helpers";
 
 function container(): string {
@@ -161,6 +161,16 @@ describe("pasteboardTarget", () => {
 });
 
 describe("writeSimPasteboard", () => {
+  test("waits for an app's delayed clipboard update and times out without one", async () => {
+    let count = 5;
+    const delayed = waitForPasteboardChange(async () => count, count, 1000);
+    setTimeout(() => { count = 6; }, 300);
+    await delayed;
+    await expect(waitForPasteboardChange(async () => count, count, 100)).rejects.toBeInstanceOf(
+      PasteboardCopyTimeoutError,
+    );
+  });
+
   test("holds the device lock through the paste shortcut", async () => {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-paste-lock-test-"));
     const log = join(dir, "writes");
@@ -196,9 +206,16 @@ describe("writeSimPasteboard", () => {
   test("copy holds the device lock from the shortcut through the read", async () => {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-copy-lock-test-"));
     const board = join(dir, "pasteboard");
+    const count = join(dir, "change-count");
     const quoted = "'" + board.replaceAll("'", "'\\''") + "'";
+    const quotedCount = "'" + count.replaceAll("'", "'\\''") + "'";
     // A one-slot simulator pasteboard: pbpaste prints it, pbcopy replaces it.
-    const xcrun = `#!/bin/sh\nif [ "$2" = pbpaste ]; then cat ${quoted}; else cat > ${quoted}; fi\n`;
+    const xcrun = `#!/bin/sh
+if [ "$2" = pbpaste ]; then cat ${quoted}
+elif [ "$5" = --change-count ]; then cat ${quotedCount}
+else cat > ${quoted}; printf '1' > ${quotedCount}
+fi
+`;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let shortcutStarted!: () => void;
@@ -210,6 +227,7 @@ describe("writeSimPasteboard", () => {
         const copied = copyFromSim(udid, async () => {
           shortcutStarted();
           await gate;
+          writeFileSync(count, "2");
         });
         await shortcut;
         const other = writeSimPasteboard(udid, "beta");

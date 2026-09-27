@@ -60,7 +60,7 @@ import { claimHelperHidSocket, type UpgradeHandlerWebSocket } from "./middleware
 import { UI_OPTIONS, getUiStatus, normalizeUiValue, setUiOption } from "./ui-settings";
 import { type WebMiddleware } from "./runtime-utils";
 import { connectToFetch, type ConnectMiddleware } from "./connect-to-fetch";
-import { readSimPasteboardResult, writeSimPasteboard } from "./sim-pasteboard";
+import { PasteboardCopyTimeoutError, readSimPasteboardResult, writeSimPasteboard } from "./sim-pasteboard";
 
 type SimReq = IncomingMessage;
 type SimRes = ServerResponse;
@@ -2549,11 +2549,16 @@ export function simMiddleware(options?: SimMiddlewareOptions): SimMiddleware {
         res.end(JSON.stringify({ ok: true, ...result }));
       } catch (error) {
         console.error(`[serve-sim] Could not access the simulator pasteboard on ${udid}:`, error);
-        res.writeHead(500, {
+        res.writeHead(error instanceof PasteboardCopyTimeoutError ? 504 : 500, {
           ...PASTEBOARD_RESPONSE_HEADERS,
           "Content-Type": "application/json",
         });
-        res.end(JSON.stringify({ ok: false, error: "Could not access the simulator pasteboard" }));
+        res.end(JSON.stringify({
+          ok: false,
+          error: error instanceof PasteboardCopyTimeoutError
+            ? error.message
+            : "Could not access the simulator pasteboard",
+        }));
       }
       return;
     }
