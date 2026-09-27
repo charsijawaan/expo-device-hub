@@ -533,6 +533,42 @@ describe("startup capability loading", () => {
     }
   });
 
+  test("keeps the default clipboard reader until the last sharing session exits", async () => {
+    const first = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    clearRegisteredCapabilities();
+    registerCapability({
+      name: "clipboard", defaultEnabled: true, scope: "allApps",
+      async setEnabled() { return { dylib: "/clipboard.dylib" }; },
+    });
+    try {
+      for (const exitingFirst of [first.pid!, process.pid]) {
+        writeRawState(JSON.stringify({
+          launchArgs: [], capabilities: {
+            clipboard: {
+              name: "clipboard", scope: "allApps", dylib: "/clipboard.dylib",
+              bundleId: null, ownerPid: first.pid,
+            },
+          },
+        }));
+        await withShimsAsync({ xcrun: "#!/bin/sh\nexit 0\n" }, async () => {
+          await applyDefaultCapabilities(UDID, null);
+        });
+        expect(readLaunchState(UDID)?.capabilities.clipboard?.ownerPids).toEqual([first.pid!, process.pid]);
+
+        expect(releaseLaunchState(UDID, exitingFirst)).toBe(true);
+        expect(readLaunchState(UDID)?.capabilities.clipboard?.ownerPids).toEqual([
+          exitingFirst === first.pid ? process.pid : first.pid!,
+        ]);
+        expect(releaseLaunchState(UDID, exitingFirst === first.pid ? process.pid : first.pid!)).toBe(false);
+        expect(readLaunchState(UDID)).toBeNull();
+      }
+    } finally {
+      first.kill("SIGKILL");
+      clearRegisteredCapabilities();
+      forgetDisabledCapabilities(UDID);
+    }
+  });
+
   test("shares disabled clipboard overrides and removes them with their owner", async () => {
     clearRegisteredCapabilities();
     registerCapability({

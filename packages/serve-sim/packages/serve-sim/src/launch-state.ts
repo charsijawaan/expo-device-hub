@@ -20,6 +20,8 @@ export interface RecordedCapability extends Capability {
   bundleId: string | null;
   /** Null keeps the capability alive after a one-shot command exits. */
   ownerPid: number | null;
+  /** Live sessions sharing a default capability, currently used by the clipboard reader. */
+  ownerPids?: number[];
 }
 
 export interface LaunchState {
@@ -85,16 +87,21 @@ function recordedCapabilities(value: unknown, retainOwnerPid?: number): Record<s
   const kept: Record<string, RecordedCapability> = {};
   for (const [key, record] of Object.entries(value)) {
     if (typeof record !== "object" || record === null) continue;
-    const { name, dylib, scope, bundleId, ownerPid } = record as Partial<RecordedCapability>;
+    const { name, dylib, scope, bundleId, ownerPid, ownerPids } = record as Partial<RecordedCapability>;
     if (typeof name !== "string" || typeof dylib !== "string" || !isCapabilityScope(scope)) {
       continue;
     }
     const owner = typeof ownerPid === "number" ? ownerPid : null;
-    if (owner !== retainOwnerPid && ownerIsGone(owner)) continue;
+    const liveOwners = Array.isArray(ownerPids)
+      ? [...new Set(ownerPids.filter((pid): pid is number =>
+          Number.isInteger(pid) && pid > 0 && (pid === retainOwnerPid || !ownerIsGone(pid))))]
+      : null;
+    if (liveOwners ? liveOwners.length === 0 : owner !== retainOwnerPid && ownerIsGone(owner)) continue;
     kept[key] = {
       ...(record as RecordedCapability),
       bundleId: typeof bundleId === "string" ? bundleId : null,
-      ownerPid: owner,
+      ownerPid: liveOwners ? liveOwners[0]! : owner,
+      ...(liveOwners ? { ownerPids: liveOwners } : {}),
     };
   }
   return kept;

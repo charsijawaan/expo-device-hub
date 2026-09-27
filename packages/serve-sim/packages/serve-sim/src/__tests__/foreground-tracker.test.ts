@@ -4,6 +4,7 @@ import type { ChildProcess } from "child_process";
 import {
   createForegroundTrackerCache,
   isUserFacingBundle,
+  parseRecentVisibilityLogs,
   parseForegroundAppLogMessage,
   type ForegroundApp,
 } from "../foreground-tracker";
@@ -54,6 +55,27 @@ describe("parseForegroundAppLogMessage", () => {
 
   test("returns null for non-foreground lines", () => {
     expect(parseForegroundAppLogMessage("Setting process visibility to: Background")).toBeNull();
+  });
+});
+
+describe("parseRecentVisibilityLogs", () => {
+  const line = (bundle: string, pid: number, state: string) =>
+    JSON.stringify({ eventMessage: `[app<${bundle}>:${pid}] Setting process visibility to: ${state}` });
+
+  test("keeps the new app when the old app backgrounds after it", () => {
+    expect(parseRecentVisibilityLogs([
+      line("dev.expo.A", 11, "Foreground"),
+      line("dev.expo.B", 22, "Foreground"),
+      line("dev.expo.A", 11, "Background"),
+      line("com.apple.iMessageAppsViewService", 33, "Foreground"),
+    ].join("\n"))).toEqual({ bundleId: "dev.expo.B", pid: 22 });
+  });
+
+  test("reports no app when the latest visible app backgrounds", () => {
+    expect(parseRecentVisibilityLogs([
+      line("dev.expo.A", 11, "Foreground"),
+      line("dev.expo.A", 11, "Background"),
+    ].join("\n"))).toBeNull();
   });
 });
 

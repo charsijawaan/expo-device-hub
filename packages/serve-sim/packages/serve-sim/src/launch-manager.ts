@@ -56,18 +56,27 @@ function releaseLaunchStateUnlocked(
 ): boolean {
   const previous = readLaunchState(udid, ownerPid);
   if (!previous) return false;
-  const kept = Object.fromEntries(
-    Object.entries(previous.capabilities).filter(([, record]) => record.ownerPid !== ownerPid),
-  );
+  const kept: Record<string, RecordedCapability> = {};
+  for (const [name, record] of Object.entries(previous.capabilities)) {
+    if (record.ownerPids) {
+      const owners = record.ownerPids.filter((pid) => pid !== ownerPid);
+      if (owners.length > 0) {
+        kept[name] = { ...record, ownerPid: owners[0]!, ownerPids: owners };
+      } else if (record.ownerPids.includes(ownerPid)) {
+        onRelease?.(record);
+      }
+    } else if (record.ownerPid === ownerPid) {
+      onRelease?.(record);
+    } else {
+      kept[name] = record;
+    }
+  }
   const sessionPids = previous.sessionPids?.filter((pid) => pid !== ownerPid);
   const disabledCapabilities = Object.fromEntries(
     Object.entries(previous.disabledCapabilities ?? {})
       .map(([name, owners]) => [name, owners.filter((pid) => pid !== ownerPid)] as const)
       .filter(([, owners]) => owners.length > 0),
   );
-  for (const record of Object.values(previous.capabilities)) {
-    if (record.ownerPid === ownerPid) onRelease?.(record);
-  }
   if (Object.keys(kept).length === 0 && !sessionPids?.length && Object.keys(disabledCapabilities).length === 0) {
     clearLaunchState(udid);
     return false;
@@ -403,7 +412,10 @@ export async function applyDefaultCapabilities(
       if (!capability) continue;
       resolved.push(capability);
     }
-    await enableCapabilitiesUnlocked(udid, bundleId, resolved, { relaunch: false });
+    await enableCapabilitiesUnlocked(udid, bundleId, resolved, {
+      relaunch: false,
+      sharedDefaults: ["clipboard"],
+    });
     const applied = resolved.map((capability) => capability.name);
 
     for (const name of overrides.enable ?? []) {
@@ -448,7 +460,7 @@ async function enableCapabilitiesUnlocked(
   udid: string,
   bundleId: string | null,
   capabilities: Capability[],
-  { relaunch = true, ownerPid = process.pid }: EnableOptions = {},
+  { relaunch = true, ownerPid = process.pid, sharedDefaults = [] }: EnableOptions & { sharedDefaults?: string[] } = {},
 ): Promise<void> {
   if (capabilities.length === 0) return;
   const dylib = capabilityLoaderPath();
@@ -461,10 +473,18 @@ async function enableCapabilitiesUnlocked(
 
   const previous = readLaunchState(udid);
   const added = Object.fromEntries(
-    capabilities.map((capability) => [
-      capability.name,
-      { ...capability, bundleId, ownerPid },
-    ]),
+    capabilities.map((capability) => {
+      const existing = previous?.capabilities[capability.name];
+      const share = sharedDefaults.includes(capability.name) && ownerPid !== null;
+      const ownerPids = share && existing?.ownerPid !== null
+        ? [...new Set([...(existing?.ownerPids ?? (existing?.ownerPid ? [existing.ownerPid] : [])), ownerPid])]
+        : share && !existing ? [ownerPid] : undefined;
+      return [capability.name, {
+        ...capability, bundleId,
+        ownerPid: ownerPids?.[0] ?? (share && existing?.ownerPid === null ? null : ownerPid),
+        ...(ownerPids ? { ownerPids } : {}),
+      }];
+    }),
   );
   const state: LaunchState = {
     ...(previous ?? { launchArgs: [], capabilities: {} }),
