@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { DeviceSession } from "../device-session";
@@ -15,7 +15,7 @@ const KeyC = HID_USAGE_BY_CODE.KeyC!;
 type KeyCall = [type: "down" | "up", usage: number];
 
 // Only the fields the paste chord touches; the rest of the session needs a real simulator.
-function session(failOn?: (call: KeyCall) => boolean, udid = "SESSION-TEST") {
+function session(failOn?: (call: KeyCall) => boolean, udid = "SESSION-TEST", onKey?: (call: KeyCall) => void) {
   const calls: KeyCall[] = [];
   const s = Object.create(DeviceSession.prototype) as DeviceSession;
   const hid = {
@@ -27,6 +27,7 @@ function session(failOn?: (call: KeyCall) => boolean, udid = "SESSION-TEST") {
     async keyChecked(type: "down" | "up", usage: number) {
       if (failOn?.([type, usage])) throw new Error("HID failed");
       calls.push([type, usage]);
+      onKey?.([type, usage]);
     },
   };
   Object.assign(s, {
@@ -241,21 +242,29 @@ describe("copy shortcut", () => {
 
 describe("copyPasteboard", () => {
   // A one-slot simulator pasteboard behind a fake xcrun; pbpaste can be slowed down.
-  async function withPasteboard(text: string, pbpasteDelay: string, run: (udid: string, board: string) => Promise<void>) {
+  async function withPasteboard(text: string, pbpasteDelay: string, run: (udid: string, board: string, markCopy: (call: KeyCall) => void) => Promise<void>) {
     const dir = mkdtempSync(join(tmpdir(), "serve-sim-copy-turn-test-"));
     const board = join(dir, "pasteboard");
+    const changeCount = join(dir, "change-count");
     writeFileSync(board, text);
-    const xcrun = `#!/bin/sh\nif [ "$2" = pbpaste ]; then sleep ${pbpasteDelay}; cat '${board}'; fi\n`;
+    writeFileSync(changeCount, "0");
+    const xcrun = `#!/bin/sh\nif [ "$5" = --change-count ]; then cat '${changeCount}'; elif [ "$2" = pbpaste ]; then sleep ${pbpasteDelay}; cat '${board}'; else cat > '${board}'; count=$(cat '${changeCount}'); printf '%s' "$((count + 1))" > '${changeCount}'; fi\n`;
+    const markCopy = ([type, usage]: KeyCall) => {
+      if (type === "up" && usage === KeyC) {
+        writeFileSync(board, text);
+        writeFileSync(changeCount, String(Number(readFileSync(changeCount, "utf8")) + 1));
+      }
+    };
     try {
-      await withShimsAsync({ xcrun }, () => run(`COPY-TURN-TEST-${process.pid}-${Math.random()}`, board));
+      await withShimsAsync({ xcrun }, () => run(`COPY-TURN-TEST-${process.pid}-${Math.random()}`, board, markCopy));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }
 
   test("waits for input a viewer already queued", async () => {
-    await withPasteboard("copied", "0", async (udid) => {
-      const { calls, internals, viewer } = session(undefined, udid);
+    await withPasteboard("copied", "0", async (udid, _board, markCopy) => {
+      const { calls, internals, viewer } = session(undefined, udid, markCopy);
       const order: string[] = [];
       const a = viewer();
       let release!: () => void;
@@ -276,8 +285,8 @@ describe("copyPasteboard", () => {
   });
 
   test("keeps another viewer's copy behind the pasteboard read", async () => {
-    await withPasteboard("copied", "0.8", async (udid, board) => {
-      const { internals, viewer } = session(undefined, udid);
+    await withPasteboard("copied", "0.8", async (udid, board, markCopy) => {
+      const { internals, viewer } = session(undefined, udid, markCopy);
       const b = viewer();
       let copyDone = false;
       let viewerCopyDone = false;
