@@ -28,6 +28,7 @@ export function trySendWsMessage(
   tag: number,
   payload: object,
 ): boolean {
+  if (ws?.readyState !== WS_OPEN_READY_STATE) return false;
   return trySendEncodedWsMessage(ws, encodeWsMessage(tag, payload));
 }
 
