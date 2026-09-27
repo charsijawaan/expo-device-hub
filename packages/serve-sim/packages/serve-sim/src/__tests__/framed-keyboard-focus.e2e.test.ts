@@ -177,6 +177,19 @@ describeWithSim(`desktop keyboard focus (sim ${udid ?? "<skipped>"})`, () => {
     }
   }
 
+  async function waitForHardwareKeyboard(checked: boolean, frame: string): Promise<void> {
+    const ready = async () => cdp.evaluate<boolean>(
+      `(() => { const control = ${HARDWARE_KEYBOARD_SWITCH}; return control?.getAttribute("aria-checked") === "${checked}" && !control.disabled; })()`,
+      frame,
+    );
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      if (await ready()) return;
+      await Bun.sleep(100);
+    }
+    expect(await ready()).toBe(true);
+  }
+
   beforeAll(async () => {
     try { cli("--kill", udid!); } catch {}
     try { simctl("uninstall", udid!, APP); } catch {}
@@ -272,17 +285,14 @@ describeWithSim(`desktop keyboard focus (sim ${udid ?? "<skipped>"})`, () => {
     }
     const hardwareKeyboard = await waitForElement(HARDWARE_KEYBOARD_SWITCH, frame);
     await clickOnce(hardwareKeyboard);
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline && await cdp.evaluate<string>(`${HARDWARE_KEYBOARD_SWITCH}.getAttribute("aria-checked")`, frame) !== "false") {
-      await Bun.sleep(100);
-    }
-    expect(await cdp.evaluate<string>(`${HARDWARE_KEYBOARD_SWITCH}.getAttribute("aria-checked")`, frame)).toBe("false");
+    await waitForHardwareKeyboard(false, frame);
 
     await clickOnce(stream);
     await typeKeys("X!");
     await waitFor(() => lastText(start), "zqX!");
 
     await clickOnce(hardwareKeyboard);
+    await waitForHardwareKeyboard(true, frame);
     await clickOnce(stream);
     await typeKeys("w");
     await waitFor(() => lastText(start), "zqX!w");
