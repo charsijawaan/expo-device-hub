@@ -88,6 +88,17 @@ export function writeSimPasteboard(udid: string, text: string): Promise<void> {
   return withSimPasteboardLock(udid, () => writeSimPasteboardUnlocked(udid, text));
 }
 
+export function pasteTextIntoSim(
+  udid: string,
+  text: string,
+  sendPasteShortcut: () => Promise<void>,
+): Promise<void> {
+  return withSimPasteboardLock(udid, async () => {
+    await writeSimPasteboardUnlocked(udid, text);
+    await sendPasteShortcut();
+  });
+}
+
 function writeSimPasteboardUnlocked(udid: string, text: string): Promise<void> {
   const tool = locatePasteboardTool() ?? buildPasteboardTool();
   return new Promise((resolveWrite, rejectWrite) => {

@@ -86,6 +86,12 @@ import { openHostEventStream, runHostAction } from "./utils/exec";
 import { hidUsageForCode } from "./utils/hid";
 import { keydownForward, shiftedCharacter } from "./utils/mobile-keyboard";
 import {
+  pasteRequestFits,
+  SIM_PASTE_MESSAGE_TAG,
+} from "./utils/sim-clipboard";
+import { useClipboardToast } from "./hooks/use-clipboard-toast";
+import { ActionMenu } from "./components/action-menu";
+import {
   DEVICE_SIDEBAR_WIDTH,
   DEVTOOLS_PANEL_WIDTH,
   LOGS_DRAWER_HEIGHT,
@@ -130,7 +136,6 @@ import {
 
 // Default CSS-pixel width of the fixed 1:1 Duo stage, independent of either screen.
 const DUO_STAGE_DEFAULT_WIDTH = 580;
-
 type PreviewConfig = NonNullable<Window["__SIM_PREVIEW__"]>;
 
 function isLogsShortcut(e: KeyboardEvent): boolean {
@@ -916,6 +921,16 @@ function AppWithConfig({
 
   // Touch/button relay via direct WebSocket
   const wsRef = useRef<WebSocket | null>(null);
+  const selectedDeviceRef = useRef(config.device);
+  selectedDeviceRef.current = config.device;
+  const pasteRequestIdRef = useRef(0);
+  const pendingPasteRef = useRef<{
+    requestId: number;
+    ws: WebSocket;
+    timeout: ReturnType<typeof setTimeout>;
+    resolve: (ok: boolean) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   if (!hingeQueueRef.current) {
     hingeQueueRef.current = createAcknowledgedControlQueue<HingeControlCommand>({
       send: (request) => {
@@ -991,6 +1006,21 @@ function AppWithConfig({
           } catch {}
           return;
         }
+        if (bytes[0] === 0x92) {
+          try {
+            const reply = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as {
+              requestId?: unknown; ok?: unknown; error?: unknown;
+            };
+            const pending = pendingPasteRef.current;
+            if (pending?.ws === ws && reply.requestId === pending.requestId && typeof reply.ok === "boolean") {
+              clearTimeout(pending.timeout);
+              pendingPasteRef.current = null;
+              if (reply.ok) pending.resolve(true);
+              else pending.reject(new Error(typeof reply.error === "string" ? reply.error : "Could not paste into the simulator"));
+            }
+          } catch {}
+          return;
+        }
         if (bytes[0] !== 0x82) return;
         try {
           const cfg = JSON.parse(new TextDecoder().decode(bytes.subarray(1))) as StreamConfig;
@@ -1004,6 +1034,12 @@ function AppWithConfig({
         } catch {}
       };
       ws.onclose = (event) => {
+        const pending = pendingPasteRef.current;
+        if (pending?.ws === ws) {
+          clearTimeout(pending.timeout);
+          pendingPasteRef.current = null;
+          pending.reject(new Error("Simulator input disconnected during paste"));
+        }
         if (!stopped && event.code === 1013) showInputSocketError(event.reason || "The server is busy. Try again shortly.");
         if (wsRef.current === ws) wsRef.current = null;
         if (!stopped) {
@@ -1028,6 +1064,12 @@ function AppWithConfig({
     return () => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      const pending = pendingPasteRef.current;
+      if (pending?.ws === currentWs) {
+        clearTimeout(pending.timeout);
+        pendingPasteRef.current = null;
+        pending.reject(new Error("Simulator input disconnected during paste"));
+      }
       if (wsRef.current === currentWs) wsRef.current = null;
       hingeQueueRef.current?.clear();
       currentWs?.close();
@@ -1294,6 +1336,46 @@ function AppWithConfig({
     sendKey("up", R);
   }, [sendKey]);
 
+  const pasteChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  const sendTextToSim = useCallback(
+    (text: string): Promise<boolean> => {
+      const device = config.device;
+      const targetWs = wsRef.current;
+      const run = pasteChainRef.current.catch(() => {}).then(() => new Promise<boolean>((resolve, reject) => {
+        const ws = wsRef.current;
+        if (selectedDeviceRef.current !== device || ws !== targetWs || ws?.readyState !== WebSocket.OPEN) {
+          reject(new Error("Simulator input disconnected during paste"));
+          return;
+        }
+        const requestId = ++pasteRequestIdRef.current;
+        if (!pasteRequestFits(requestId, text)) {
+          reject(new Error("This text is too large to paste into the simulator"));
+          return;
+        }
+        const timeout = setTimeout(() => {
+          if (pendingPasteRef.current?.requestId !== requestId) return;
+          pendingPasteRef.current = null;
+          reject(new Error("Simulator paste timed out"));
+        }, 150_000);
+        pendingPasteRef.current = { requestId, ws, timeout, resolve, reject };
+        if (!trySendWsMessage(ws, SIM_PASTE_MESSAGE_TAG, { requestId, text })) {
+          clearTimeout(timeout);
+          pendingPasteRef.current = null;
+          reject(new Error("Simulator input disconnected during paste"));
+        }
+      }));
+      pasteChainRef.current = run.then(
+        () => {},
+        () => {},
+      );
+      return run;
+    },
+    [config.device],
+  );
+
+  const clipboard = useClipboardToast(sendTextToSim);
+
   const simContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const flipRef = useRef<HTMLDivElement | null>(null);
@@ -1411,6 +1493,8 @@ function AppWithConfig({
     const onKey = (e: KeyboardEvent, type: "down" | "up") => {
       const simFocused = simFocusedRef.current;
       const keyboardOpen = keyboardOpenRef.current;
+      // Only new presses: a key held while the simulator had focus still has to be released there.
+      if (type === "down" && isTypingTarget(e.target) && !keyboardOpen) return;
       if (simFocused && !keyboardOpen) {
         // Leave Command+digits to browser tab switching. Use physical codes so
         // Option+Shift's layout-specific characters do not affect pose lookup.
@@ -1450,6 +1534,21 @@ function AppWithConfig({
           return;
         }
       }
+      if (
+        simFocused &&
+        !keyboardOpen &&
+        e.code === "KeyV" &&
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        const held = hidUsageForCode(e.code);
+        if (type === "up" && held != null && pressedKeysRef.current.has(held)) {
+          pressedKeysRef.current.delete(held);
+          sendWs(0x06, { type, usage: held });
+        }
+        return;
+      }
       if (type === "up") {
         // Always release a key we are holding, even if the gate changed since the
         // keydown, so a flip between down and up cannot leave it stuck on the sim.
@@ -1484,6 +1583,19 @@ function AppWithConfig({
       window.removeEventListener("keyup", up);
     };
   }, [sendWs, config.device, rotateBy, supportsHingeAngle, setHingeControl]);
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (!simFocusedRef.current) return;
+      if (isTypingTarget(e.target)) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text) return;
+      e.preventDefault();
+      void clipboard.pasteText(text);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [clipboard]);
 
   const uploads = useUploadToasts();
   const screenshot = useScreenshotToast(config.device);
@@ -1888,6 +2000,17 @@ function AppWithConfig({
                 title="Screenshot"
                 onClick={(e) => { e.preventDefault(); void screenshot.capture(); }}
               />
+              <ActionMenu
+                items={[
+                  {
+                    label: "Paste from Device",
+                    description: "This device's clipboard to the simulator",
+                    onSelect: () => void clipboard.pasteFromDevice(),
+                  },
+                ]}
+              >
+                {(trigger) => <SimulatorToolbar.CopyButton title="Clipboard" {...trigger} />}
+              </ActionMenu>
               <SimulatorToolbar.RotateButton title="Rotate device" direction={isDuo ? "right" : "left"} />
             </SimulatorToolbar.Actions>
           </SimulatorToolbar>
