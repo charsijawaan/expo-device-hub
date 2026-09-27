@@ -6,7 +6,7 @@ import { join, resolve } from "path";
 import { setTimeout as sleep } from "timers/promises";
 import { capabilityIsDisabled, type CapabilityDefinition } from "./capabilities";
 import { debugPasteboard } from "./debug";
-import { frontmostAppOf } from "./foreground-tracker";
+import { frontmostAppFromRecentLogs, frontmostAppOf } from "./foreground-tracker";
 import { devicesArmedHere, releaseSessionSync, setCapabilityEnabled } from "./launch-manager";
 import { readLaunchState } from "./launch-state";
 import { dirnameOf } from "./runtime";
@@ -240,6 +240,11 @@ async function readViaInjectedReader(udid: string): Promise<PasteboardReadResult
   const afterArming = await requestInjectedPasteboard(container);
   if (afterArming !== null) return { text: afterArming, relaunchedApp: null };
   if (!target.relaunch) return null;
+
+  // A reader timeout is long enough for the user to switch apps. A fresh visibility read avoids
+  // reopening the old target over the app they chose meanwhile; unknown foreground is unsafe too.
+  const current = await frontmostAppFromRecentLogs(udid);
+  if (current?.bundleId !== bundleId) return null;
 
   debugPasteboard(
     "%s did not answer on %s after arming %s; relaunching as a last resort",

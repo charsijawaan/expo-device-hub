@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "child_process";
+import { foregroundTracker } from "../foreground-tracker";
 import { clearLaunchState, removeCapabilityLoaderSync } from "../launch-manager";
+import { simctlSync } from "../simctl";
 import { readSimPasteboard } from "../sim-pasteboard";
 import {
   armClipboardForAllApps,
@@ -108,6 +110,26 @@ describeWildcard(`clipboard armed for every app (${udid ?? "<skipped>"})`, () =>
 
     expect(runningPid(udid!, FIXTURE_BUNDLE)).toBe(before);
     session.unsubscribe();
+  }, 60_000);
+});
+
+describeWildcard(`clipboard from an untracked app (${udid ?? "<skipped>"})`, () => {
+  afterAll(() => {
+    terminatePasteboardApps(udid!);
+    clearLaunchState(udid!);
+    removeCapabilityLoaderSync(udid!);
+  }, 60_000);
+
+  test("finds a simctl-launched app without a foreground subscriber", async () => {
+    ensureFixtureInstalled(udid!);
+    clearLaunchState(udid!);
+    removeCapabilityLoaderSync(udid!);
+    simctlSync(["launch", udid!, FIXTURE_BUNDLE]);
+    expect(foregroundTracker.peek(udid!)).toBeNull();
+
+    const probe = "serve-sim-untracked-app-probe";
+    writeTestPasteboard(udid!, probe);
+    expect(await withSkipPbpaste(() => readSimPasteboard(udid!))).toBe(probe);
   }, 60_000);
 });
 

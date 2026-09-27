@@ -6,6 +6,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { axFrontmostAsync } from "./native";
+import { simctlRaw } from "./simctl";
 
 // The foreground user app: `pid` is the frontmost process, `bundleId` its app.
 export interface ForegroundApp {
@@ -252,8 +253,39 @@ export function createForegroundTrackerCache(deps: ForegroundTrackerDeps = {}) {
 
 export const foregroundTracker = createForegroundTrackerCache();
 
-/** The current foreground app: the tracker when it's warm, else the AX bridge; null when unknown. */
-export function frontmostAppOf(udid: string): Promise<ForegroundApp | null> {
+/** Recover the latest visible app when neither a live tracker nor AX can identify it. */
+export async function frontmostAppFromRecentLogs(udid: string): Promise<ForegroundApp | null> {
+  const output = await simctlRaw([
+    "spawn", udid, "log", "show", "--last", "1h", "--style", "ndjson", "--predicate",
+    'process == "SpringBoard" AND eventMessage CONTAINS "Setting process visibility to:"',
+  ], { timeout: 15_000, maxBuffer: 2 * 1024 * 1024 }).catch(() => "");
+  return parseRecentVisibilityLogs(output);
+}
+
+export function parseRecentVisibilityLogs(output: string): ForegroundApp | null {
+  let visible: ForegroundApp | null = null;
+  for (const line of output.split("\n")) {
+    let message: string;
+    try {
+      message = (JSON.parse(line) as { eventMessage?: string }).eventMessage ?? "";
+    } catch {
+      continue;
+    }
+    const match = /\[app<([^>]+)>:(\d+)\] Setting process visibility to: (Foreground|Background)/.exec(message);
+    if (!match || !isUserFacingBundle(match[1]!)) continue;
+    if (match[3] === "Foreground") {
+      visible = { bundleId: match[1]!, pid: Number(match[2]) };
+    } else if (visible?.bundleId === match[1]) {
+      // SpringBoard may announce the new foreground app before backgrounding the old one.
+      visible = null;
+    }
+  }
+  return visible;
+}
+
+/** The current foreground app: live tracker, AX bridge, then recent SpringBoard history. */
+export async function frontmostAppOf(udid: string): Promise<ForegroundApp | null> {
   const tracked = foregroundTracker.peek(udid);
-  return tracked ? Promise.resolve(tracked) : frontmostAppViaAx(udid);
+  if (tracked) return tracked;
+  return (await frontmostAppViaAx(udid)) ?? frontmostAppFromRecentLogs(udid);
 }
