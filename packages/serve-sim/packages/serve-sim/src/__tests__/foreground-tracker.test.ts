@@ -77,6 +77,13 @@ describe("parseRecentVisibilityLogs", () => {
       line("dev.expo.A", 11, "Background"),
     ].join("\n"))).toBeNull();
   });
+
+  test("forgets a terminated app after its visibility becomes unknown", () => {
+    expect(parseRecentVisibilityLogs([
+      line("dev.expo.A", 11, "Foreground"),
+      line("dev.expo.A", 11, "Unknown"),
+    ].join("\n"))).toBeNull();
+  });
 });
 
 describe("isUserFacingBundle", () => {
