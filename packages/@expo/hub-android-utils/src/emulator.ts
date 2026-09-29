@@ -10,8 +10,9 @@ export function emulatorSerial(port: number): string {
 /**
  * Build the `emulator` arguments for a boot.
  * Let the emulator choose the GPU backend that best matches the host.
+ * `EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS` is appended last, split on whitespace.
  */
-export function buildEmulatorArgs(options: BootDeviceOptions): string[] {
+export function buildEmulatorArgs(options: BootDeviceOptions, env = process.env): string[] {
   return [
     "-avd",
     options.name,
@@ -23,6 +24,7 @@ export function buildEmulatorArgs(options: BootDeviceOptions): string[] {
     "-port",
     String(options.port),
     ...(options.extraArgs ?? []),
+    ...(env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS?.split(/\s+/).filter(Boolean) ?? []),
   ];
 }
 
